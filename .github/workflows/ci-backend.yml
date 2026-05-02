@@ -215,14 +215,7 @@ jobs:
       AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
 
     steps:
-      # ━━━ Step 1: dist/ を Artifact から取得 ━━━
-      - name: dist/ を Artifact からダウンロード
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-dist # build ジョブでアップロードした名前と一致させる
-          path: dist/ # ダウンロード先ディレクトリ
-
-      # ━━━ Step 2: 本番用 node_modules をインストール ━━━
+      # ━━━ Step 1: package.json / package-lock.json を取得 ━━━
       - name: package.json を checkout
         uses: actions/checkout@v4
         with:
@@ -231,6 +224,7 @@ jobs:
             backend/package-lock.json
           sparse-checkout-cone-mode: false
 
+      # ━━━ Step 2: Node.js をセットアップ ━━━
       - name: Node.js をセットアップ
         uses: actions/setup-node@v4
         with:
@@ -238,16 +232,27 @@ jobs:
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
+      # ━━━ Step 3: 本番用 node_modules をインストール ━━━
       - name: 本番用 node_modules をインストール
         # --omit=dev で jest 等開発ツールを除外し zip サイズを削減する
         run: npm ci --omit=dev
         working-directory: backend
 
-      # ━━━ Step 3: デプロイ用 zip を作成 ━━━
-      - name: デプロイパッケージを zip に圧縮
-        run: zip -r backend-deploy.zip dist/ backend/node_modules/ backend/package.json
+      # ━━━ Step 4: dist/ を Artifact から取得 ━━━
+      - name: dist/ を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dist # build ジョブでアップロードした名前と一致させる
+          path: backend/dist/ # zip の中に dist/ として入れるため backend/ 配下へ取得
 
-      # ━━━ Step 4: Azure へのデプロイ ━━━
+      # ━━━ Step 5: デプロイ用 zip を作成 ━━━
+      - name: デプロイパッケージを zip に圧縮
+        # App Service の wwwroot 直下に package.json / node_modules / dist を配置する。
+        # backend/ ディレクトリごと zip に入れると、npm start が package.json を見つけられない。
+        run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
+        working-directory: backend
+
+      # ━━━ Step 6: Azure へデプロイ ━━━
       - name: Azure App Service (dev) にデプロイ
         # AZURE_WEBAPP_PUBLISH_PROFILE が未設定の場合はスキップする
         if: env.AZURE_CONFIGURED == 'true'

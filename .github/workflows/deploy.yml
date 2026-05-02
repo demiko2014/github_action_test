@@ -71,13 +71,6 @@ on:
 env:
   NODE_VERSION: "20.x" # 全ジョブで使う Node.js バージョンをここで一元管理する
 
-  # 【AZURE_CONFIGURED の仕組み】
-  # GitHub Actions の仕様上、secrets は job の if「ジョブ実行条件」内で直接使えない
-  # （セキュリティ上の理由でシークレット値は if 式内で評価されない）
-  # そのため env 変数に「設定済みかどうか」を真偽値として展開し
-  # ステップの if 条件で「env.AZURE_CONFIGURED == 'true'」として参照する
-  AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
-
 # ---------- ジョブ定義 ----------
 jobs:
   # ════════════════════════════════════════════════════════
@@ -168,6 +161,16 @@ jobs:
     if: inputs.environment == 'dev' # dev 以外を選択した場合は Skipped
     runs-on: ubuntu-latest
     environment: dev # dev Environment のシークレット（接続先・認証情報）を使う
+    env:
+      # 【AZURE_CONFIGURED の仕組み】
+      # GitHub Actions の仕様上、secrets は job の if「ジョブ実行条件」内で直接使えない
+      # （セキュリティ上の理由でシークレット値は if 式内で評価されない）
+      # そのため env 変数に「設定済みかどうか」を真偽値として展開し
+      # ステップの if 条件で「env.AZURE_CONFIGURED == 'true'」として参照する
+      #
+      # Environment secret は environment: dev を指定したジョブ内で有効になるため、
+      # workflow 全体ではなく deploy job の env として定義する。
+      AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
 
     steps:
       # ━━━ Step 1: zip の取得 ━━━
@@ -202,6 +205,10 @@ jobs:
     if: inputs.environment == 'stg'
     runs-on: ubuntu-latest
     environment: stg # stg Environment のシークレットを使う（dev とは別の接続先）
+    env:
+      # stg Environment に発行プロファイルが登録されているかを確認する内部フラグ。
+      # GitHub secret として AZURE_CONFIGURED を作る必要はない。
+      AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
 
     steps:
       - name: zip を Artifact からダウンロード
@@ -235,6 +242,10 @@ jobs:
     if: inputs.environment == 'prd'
     runs-on: ubuntu-latest
     environment: prd # prd Environment（Required reviewers 設定済み）のシークレットを使う
+    env:
+      # prd Environment に発行プロファイルが登録されているかを確認する内部フラグ。
+      # GitHub secret として AZURE_CONFIGURED を作る必要はない。
+      AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
 
     steps:
       - name: zip を Artifact からダウンロード
