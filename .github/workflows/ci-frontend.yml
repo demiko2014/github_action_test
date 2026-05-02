@@ -80,3 +80,40 @@ jobs:
           name: frontend-coverage # Artifacts のファイル名
           path: frontend/coverage/ # coverage/ フォルダ全体をアップロード
           retention-days: 7 # 7日後に自動削除（容量節約）
+
+  # ══════════════════════════════════════════════
+  # ジョブ② build
+  #   test ジョブが全バージョンで成功した後にビルドを実行
+  #   → "TypeScript が JS に変換できる" ことを CI で保証する
+  # ══════════════════════════════════════════════
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test   # test ジョブが成功した時だけ実行（失敗したらスキップ）
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'                                  # ビルドは LTS の 20.x 固定
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 依存関係インストール
+        run: npm ci --ignore-scripts    # nfc-pcsc のネイティブビルドをスキップ
+
+      - name: TypeScript をコンパイル
+        # tsconfig.json の設定に従って src/ を dist/ に JS 変換する
+        run: npm run build
+
+      - name: ビルド成果物を Artifacts にアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist    # Artifacts のファイル名
+          path: frontend/dist/   # コンパイル後の JS ファイル群
+          retention-days: 7      # 7日後に自動削除
