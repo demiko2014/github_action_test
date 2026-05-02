@@ -121,7 +121,7 @@ jobs:
   #       ↓
   #     deploy-prd
   # ════════════════════════════════════════════════════════
-  deploy-dev:
+  deploy-1-dev:
     name: 1. Deploy to dev
     needs: build # build が成功した後に実行される
     # develop ブランチ以外では Skipped になる
@@ -147,7 +147,7 @@ jobs:
   # ジョブ③ deploy-stg
   #   build 成功後、staging ブランチの時だけ stg 環境へデプロイ（deploy-dev と並列）
   # ════════════════════════════════════════════════════════
-  deploy-stg:
+  deploy-2-stg:
     name: 2. Deploy to stg
     needs: build # deploy-dev と同じ層に並列表示される
     if: always() && (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
@@ -174,7 +174,7 @@ jobs:
   #   always() により両ジョブが Skipped でも自分の if 条件で独立して判定できる
   #   prd Environment に Required reviewers を設定すると承認待ちで停止（本番誤デプロイ防止）
   # ════════════════════════════════════════════════════════
-  deploy-prd:
+  deploy-3-prd:
     name: 3. Deploy to prd
     needs: build # dev/stg と同じ層に並列表示される
     if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
