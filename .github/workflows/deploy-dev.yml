@@ -77,7 +77,7 @@ jobs:
 
       - name: Azure App Service (dev) にデプロイ
         # AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ（Azure 未設定時のエラー防止）
-        if: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
+        if: secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # dev Environment の Secret
