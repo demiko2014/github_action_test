@@ -1,6 +1,6 @@
 # PaSoRi FeliCa Reader
 
-[![CI](https://github.com/<YOUR_USERNAME>/github_action_test/actions/workflows/ci.yml/badge.svg)](https://github.com/<YOUR_USERNAME>/github_action_test/actions/workflows/ci.yml)
+[![CI](https://github.com/demiko2014/github_action_test/actions/workflows/ci.yml/badge.svg)](https://github.com/demiko2014/github_action_test/actions/workflows/ci.yml)
 
 PaSoRi (RC-S380 など) を使って **FeliCa カード** を読み取る NestJS Commander CLI アプリです。  
 GitHub Actions の学習用サンプルとしても活用できます。
@@ -22,7 +22,7 @@ GitHub Actions の学習用サンプルとしても活用できます。
 
 ```bash
 # クローン
-git clone https://github.com/<YOUR_USERNAME>/github_action_test.git
+git clone https://github.com/demiko2014/github_action_test.git
 cd github_action_test
 
 # 依存関係インストール（ネイティブビルドが走ります）
