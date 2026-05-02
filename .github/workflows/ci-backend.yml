@@ -43,6 +43,7 @@ on:
       - staging # develop → staging のマージ完了時に実行
     paths:
       - "backend/**" # backend/ 配下のファイルに変更がある時だけ実行
+      - ".github/workflows/ci-backend.yml" # この workflow 自体を変更した時も検証する
         # README や frontend だけ変更した push では無駄に CI を動かさない
 
   pull_request:
@@ -51,6 +52,7 @@ on:
       - main # 「staging → main」の PR を作成・更新するたびに実行
     paths:
       - "backend/**" # push と同様、backend に関係ない PR では実行しない
+      - ".github/workflows/ci-backend.yml" # workflow の変更も PR 上で検証する
 
   workflow_dispatch: # Actions タブの「Run workflow」ボタンで手動実行できるようにする
     # デバッグ目的や「ブランチ戦略外のタイミングで確認したい」時に便利
