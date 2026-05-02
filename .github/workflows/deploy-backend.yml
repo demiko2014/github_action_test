@@ -6,7 +6,12 @@
 #
 # このファイルの役割:
 #   develop→main PR が Approve されてマージされた時に
-#   自動でテスト → ビルド → Azure App Service へデプロイする
+#   自動でビルド → Azure App Service へデプロイする
+#
+#   ※ テストは ci-backend.yml が担当
+#     Branch Protection で ci-backend の通過を必須にすれば
+#     テスト済みのコードだけが main にマージされるので
+#     ここで再度テストする必要はない
 #
 # 事前準備（初回のみ）:
 #   1. Azure Portal で App Service を作成（Node.js 20 / Linux）
@@ -35,48 +40,13 @@ env:
 # ---------- ジョブ定義 ----------
 jobs:
   # ════════════════════════════════
-  # ジョブ① test
-  #   デプロイ前に最終テストを実行する
-  #   （main マージ直前に CI は通っているが念のため再確認）
-  # ════════════════════════════════
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: backend # コマンドは backend/ 内で実行
-
-    steps:
-      # リポジトリのコードをチェックアウト
-      - uses: actions/checkout@v4
-
-      - name: Node.js をセットアップ
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }} # env で定義した 20.x を使用
-          cache: "npm" # node_modules をキャッシュ
-          cache-dependency-path: backend/package-lock.json
-
-      - name: 依存関係インストール
-        run: npm ci # package-lock.json を厳密に使ってクリーンインストール
-
-      - name: TypeScript 型チェック
-        run: npx tsc --noEmit # 型エラーがあればここで止まる
-
-      - name: ユニットテスト実行
-        run: npm run test:ci # テスト失敗ならここで止まり deploy ジョブは実行されない
-
-  # ════════════════════════════════
-  # ジョブ② deploy
-  #   test ジョブが成功した時だけ実行される
+  # ジョブ deploy
   #   ビルド → zip → Azure App Service へアップロード
+  #   テストは ci-backend.yml（PR 時）が済ませているので省略
   # ════════════════════════════════
   deploy:
     name: Build & Deploy
     runs-on: ubuntu-latest
-    needs: test # test ジョブが成功した時だけ実行（失敗したらデプロイしない）
-
     defaults:
       run:
         working-directory: backend
