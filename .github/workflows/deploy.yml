@@ -127,7 +127,7 @@ jobs:
     # develop ブランチ以外では Skipped になる
     if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
     runs-on: ubuntu-latest
-    environment: dev # dev Environment のシークレットを使う
+    environment: 1-dev # dev Environment のシークレットを使う
 
     steps:
       - name: zip を Artifact からダウンロード
@@ -149,10 +149,10 @@ jobs:
   # ════════════════════════════════════════════════════════
   deploy-stg:
     name: Deploy to stg
-    needs: build # deploy-dev と同じ層に並列表示される
-    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg')
+    needs: deploy-dev # deploy-dev の下に縦に並ぶ
+    if: always() && (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
     runs-on: ubuntu-latest
-    environment: stg
+    environment: 2-stg
 
     steps:
       - name: zip を Artifact からダウンロード
@@ -176,10 +176,10 @@ jobs:
   # ════════════════════════════════════════════════════════
   deploy-prd:
     name: Deploy to prd
-    needs: [deploy-dev, deploy-stg] # 両方を待つ → ダイヤモンド形の一番下に表示される
+    needs: deploy-stg # deploy-stg の下に縦に並ぶ → 一番下
     if: always() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))
     runs-on: ubuntu-latest
-    environment: prd
+    environment: 3-prd
 
     steps:
       - name: zip を Artifact からダウンロード
