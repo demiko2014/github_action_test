@@ -9,7 +9,7 @@
 #   1. test  : lint + ユニットテスト + カバレッジ
 #   2. build : TypeScript コンパイル
 # -----------------------------------------------
-name: CI
+name: Test & Build
 
 on:
   push:
