@@ -1,13 +1,15 @@
 # -----------------------------------------------
-# CI ワークフロー
+# Test & Build ワークフロー
 #
 # トリガー:
 #   - main / develop ブランチへの push
 #   - main / develop ブランチへの Pull Request
+#   - 手動実行 (workflow_dispatch)
 #
 # ジョブ:
-#   1. test  : lint + ユニットテスト + カバレッジ
-#   2. build : TypeScript コンパイル
+#   1. test-frontend  : frontend/ のユニットテスト
+#   2. test-backend   : backend/  のユニットテスト
+#   3. build-backend  : backend/ TypeScript コンパイル
 # -----------------------------------------------
 name: Test & Build
 
@@ -19,27 +21,31 @@ on:
   workflow_dispatch: # Actions タブから手動実行を許可
 
 jobs:
-  # ── ① テスト ────────────────────────────────
-  test:
-    name: Unit Tests
+  # ── ① frontend テスト ──────────────────────
+  test-frontend:
+    name: Frontend Tests
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        node-version: [20.x, 22.x] # 複数バージョンでテスト
+        node-version: [20.x, 22.x]
+
+    defaults:
+      run:
+        working-directory: frontend # コマンドは frontend/ 内で実行
 
     steps:
-      - name: リポジトリをチェックアウト
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Node.js ${{ matrix.node-version }} をセットアップ
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: "npm" # node_modules をキャッシュして高速化
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
-      # nfc-pcsc はネイティブビルドが必要だが CI では不要なためスキップ
-      - name: 依存関係インストール (ネイティブビルドをスキップ)
+      # nfc-pcsc はネイティブビルド不要
+      - name: 依存関係インストール
         run: npm ci --ignore-scripts
 
       - name: TypeScript 型チェック
@@ -48,19 +54,63 @@ jobs:
       - name: ユニットテスト実行
         run: npm run test:ci
 
-      - name: カバレッジレポートを Artifacts にアップロード
+      - name: カバレッジを Artifacts にアップロード
         uses: actions/upload-artifact@v4
-        if: matrix.node-version == '20.x' # 1 バージョンのみアップロード
+        if: matrix.node-version == '20.x'
         with:
-          name: coverage-report
-          path: coverage/
+          name: frontend-coverage
+          path: frontend/coverage/
           retention-days: 7
 
-  # ── ② ビルド ────────────────────────────────
-  build:
-    name: Build
+  # ── ② backend テスト ───────────────────────
+  test-backend:
+    name: Backend Tests
     runs-on: ubuntu-latest
-    needs: test # テストが通った後にビルド
+
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
+    defaults:
+      run:
+        working-directory: backend # コマンドは backend/ 内で実行
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js ${{ matrix.node-version }} をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 依存関係インストール
+        run: npm ci
+
+      - name: TypeScript 型チェック
+        run: npx tsc --noEmit
+
+      - name: ユニットテスト実行
+        run: npm run test:ci
+
+      - name: カバレッジを Artifacts にアップロード
+        uses: actions/upload-artifact@v4
+        if: matrix.node-version == '20.x'
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+          retention-days: 7
+
+  # ── ③ backend ビルド ────────────────────────
+  build-backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    needs: [test-frontend, test-backend] # 両方のテストが通った後にビルド
+
+    defaults:
+      run:
+        working-directory: backend
 
     steps:
       - uses: actions/checkout@v4
@@ -69,8 +119,9 @@ jobs:
         with:
           node-version: "20.x"
           cache: "npm"
+          cache-dependency-path: backend/package-lock.json
 
-      - run: npm ci --ignore-scripts
+      - run: npm ci
 
       - name: TypeScript をコンパイル
         run: npm run build
@@ -78,6 +129,6 @@ jobs:
       - name: ビルド成果物を Artifacts にアップロード
         uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
+          name: backend-dist
+          path: backend/dist/
           retention-days: 7
