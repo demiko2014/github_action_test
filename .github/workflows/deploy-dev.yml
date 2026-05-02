@@ -38,6 +38,8 @@ on:
 # ---------- 共通設定 ----------
 env:
   NODE_VERSION: "20.x"
+  # secrets は if 式内で直接参照できないため env 経由でチェックする
+  AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
 
 # ---------- ジョブ定義 ----------
 jobs:
@@ -77,7 +79,7 @@ jobs:
 
       - name: Azure App Service (dev) にデプロイ
         # AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ（Azure 未設定時のエラー防止）
-        if: secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
+        if: env.AZURE_CONFIGURED == 'true'
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # dev Environment の Secret

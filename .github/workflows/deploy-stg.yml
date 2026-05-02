@@ -36,6 +36,7 @@ on:
 # ---------- 共通設定 ----------
 env:
   NODE_VERSION: "20.x"
+  AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
 
 # ---------- ジョブ定義 ----------
 jobs:
@@ -73,7 +74,7 @@ jobs:
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
       - name: Azure App Service (stg) にデプロイ
-        if: secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
+        if: env.AZURE_CONFIGURED == 'true'
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
