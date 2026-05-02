@@ -1,0 +1,82 @@
+# -----------------------------------------------
+# CI ワークフロー
+#
+# トリガー:
+#   - main / develop ブランチへの push
+#   - main / develop ブランチへの Pull Request
+#
+# ジョブ:
+#   1. test  : lint + ユニットテスト + カバレッジ
+#   2. build : TypeScript コンパイル
+# -----------------------------------------------
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # ── ① テスト ────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]   # 複数バージョンでテスト
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Node.js ${{ matrix.node-version }} をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'               # node_modules をキャッシュして高速化
+
+      # nfc-pcsc はネイティブビルドが必要だが CI では不要なためスキップ
+      - name: 依存関係インストール (ネイティブビルドをスキップ)
+        run: npm ci --ignore-scripts
+
+      - name: TypeScript 型チェック
+        run: npx tsc --noEmit
+
+      - name: ユニットテスト実行
+        run: npm run test:ci
+
+      - name: カバレッジレポートを Artifacts にアップロード
+        uses: actions/upload-artifact@v4
+        if: matrix.node-version == '20.x'   # 1 バージョンのみアップロード
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  # ── ② ビルド ────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test            # テストが通った後にビルド
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - run: npm ci --ignore-scripts
+
+      - name: TypeScript をコンパイル
+        run: npm run build
+
+      - name: ビルド成果物を Artifacts にアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7

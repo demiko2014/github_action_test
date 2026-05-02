@@ -1,0 +1,73 @@
+# -----------------------------------------------
+# リリースワークフロー
+#
+# トリガー:
+#   - v*.*.* 形式のタグが push されたとき
+#   例: git tag v1.0.0 && git push --tags
+#
+# ジョブ:
+#   1. release : ビルド → zip → GitHub Release 作成
+# -----------------------------------------------
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # GitHub Release を作成するために必要
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: 依存関係インストール
+        run: npm ci --ignore-scripts
+
+      - name: TypeScript をコンパイル
+        run: npm run build
+
+      # dist/ を zip に固める
+      - name: 成果物を zip に圧縮
+        run: |
+          zip -r pasori-felica-reader-${{ github.ref_name }}.zip dist/ package.json README.md
+
+      # GitHub Release を作成してアップロード
+      - name: GitHub Release を作成
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## PaSoRi FeliCa Reader ${{ github.ref_name }}
+
+            ### インストール方法
+            ```bash
+            unzip pasori-felica-reader-${{ github.ref_name }}.zip
+            npm install --omit=dev
+            node dist/main.js read --help
+            ```
+
+            ### 使い方
+            ```bash
+            # カード情報表示
+            node dist/main.js read
+
+            # 残高読み取り
+            node dist/main.js read --mode balance
+            ```
+          files: pasori-felica-reader-${{ github.ref_name }}.zip
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

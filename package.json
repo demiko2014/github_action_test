@@ -1,0 +1,37 @@
+{
+  "name": "pasori-felica-reader",
+  "version": "1.0.0",
+  "description": "PaSoRi で FeliCa カードを読み取る NestJS Commander CLI",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node -r ts-node/register src/main.ts read",
+    "start:balance": "node -r ts-node/register src/main.ts read --mode balance",
+    "start:prod": "node dist/main.js read",
+    "dev": "ts-node -r tsconfig-paths/register src/main.ts read",
+    "test": "jest --config jest.config.js",
+    "test:cov": "jest --config jest.config.js --coverage",
+    "test:ci": "jest --config jest.config.js --coverage --ci --forceExit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@nestjs/common": "^11.1.19",
+    "@nestjs/core": "^11.1.19",
+    "nest-commander": "^3.20.1",
+    "nfc-pcsc": "^0.8.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.1.19",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.6.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
