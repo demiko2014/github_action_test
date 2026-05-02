@@ -22,7 +22,9 @@ az deployment group create \
   --parameters infra/parameters/dev.bicepparam
 ```
 
-dev は App Service quota を避けやすいように `japanwest` / `F1` にしています。
+dev は Japan East の App Service quota を避けるため `japanwest` にしています。
+また、`F1` は無料枠の CPU quota に到達すると `QuotaExceeded` でデプロイできなくなるため、
+現在は `B1` を指定しています。
 
 stg / prd は parameter ファイルを差し替えます。
 

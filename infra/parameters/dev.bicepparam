@@ -1,8 +1,9 @@
 // ==============================================
 // dev 環境用パラメータ
 //
-// 開発環境はコストを抑えるため、無料 SKU の F1 を使います。
-// Japan East は App Service quota が 0 で作成できなかったため、
+// 開発環境は当初 F1 を使っていましたが、無料枠の CPU quota に到達すると
+// App Service が QuotaExceeded になりデプロイできなくなるため、B1 にしています。
+// Japan East は作成時点で App Service quota が 0 だったため、
 // 作成検証が通った Japan West を指定しています。
 // ==============================================
 
@@ -18,5 +19,5 @@ param environment = 'dev'
 // dev は Japan West に作成します。
 param location = 'japanwest'
 
-// F1 は無料枠です。検証用途向けで、スケールアウトや本番運用には向きません。
-param skuName = 'F1'
+// B1 は有料です。App Service Plan が存在する間は課金されます。
+param skuName = 'B1'
