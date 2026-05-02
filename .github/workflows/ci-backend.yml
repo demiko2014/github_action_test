@@ -1,101 +1,171 @@
 # ==============================================
 # Backend CI ワークフロー
 #
-# ブランチ戦略:
+# 【役割の整理】
+#   このファイル → コードの品質チェック（テスト・Lint・ビルド）
+#            + develop push 時に dev へ自動デプロイ
+#   deploy.yml   → Azure へのデプロイ（stg / prd は Actions タブから手動実行）
+#
+# 【ブランチ戦略】
 #   feature/* → develop → staging → main
 #                  ↓          ↓        ↓
-#                 dev        stg      prd   ← デプロイ先の環境（deploy-backend.yml が担当）
+#                 dev        stg      prd   ← デプロイ先の環境
 #
-# このファイルの役割:
-#   ① develop にマージされたら即テストを走らせて品質を確認する（dev 反映前に検知）
-#   ② staging への PR 時にテストを必須チェックとして実行する（dev → stg 昇格の品質ゲート）
-#   ③ main への PR 時にテストを必須チェックとして実行する（stg → prd 昇格の品質ゲート）
-#      ※ Branch Protection で「必須ステータスチェック」に登録することで
-#        CI が通らないとマージできない状態にする
+# 【このワークフローが動くタイミング】
+#   ① develop への push 時
+#        → feature ブランチからマージされた直後にテストを実行
+#          「誰かが壊したコードを dev にデプロイしてしまう」前に検知する
+#
+#   ② staging への PR 時（develop → staging のマージ申請）
+#        → dev 環境で動作確認済みのコードを stg に昇格させる前の品質ゲート
+#          Branch Protection の「必須ステータスチェック」に登録すると
+#          CI が緑にならないとマージボタンが押せなくなる
+#
+#   ③ main への PR 時（staging → main のマージ申請）
+#        → stg で検証済みのコードを本番（prd）に昇格させる前の最終品質ゲート
+#          ここが通らないと prd へのデプロイ申請自体ができない
+#
+# 【ジョブの流れ】
+#   test (Node 20.x) ┐
+#   test (Node 22.x) ├─ 並列実行 → 全バージョンで OK なら → build → deploy-dev（develop push 時のみ）
+#   test (Node 24.x) ┘
 # ==============================================
 
-# Actions タブに表示されるワークフロー名
+# Actions タブの一覧やメール通知に表示されるワークフロー名
 name: Backend CI
 
 # ---------- トリガー設定 ----------
+# GitHub Actions では「どのイベントが起きたら実行するか」をここで定義する
 on:
   push:
     branches:
-      - develop # develop マージ → dev 環境デプロイ前の品質確認
-      - staging # staging マージ → stg 環境デプロイ前の品質確認
+      - develop # feature/* → develop のマージ完了時に実行
+      - staging # develop → staging のマージ完了時に実行
     paths:
-      - "backend/**" # backend/ 配下のファイルが変わった時だけ実行
+      - "backend/**" # backend/ 配下のファイルに変更がある時だけ実行
+        # README や frontend だけ変更した push では無駄に CI を動かさない
 
   pull_request:
     branches:
-      - staging # develop → staging の PR 時に実行（dev → stg 昇格の品質ゲート）
-      - main # staging → main の PR 時に実行（stg → prd 昇格の品質ゲート）
+      - staging # 「develop → staging」の PR を作成・更新するたびに実行
+      - main # 「staging → main」の PR を作成・更新するたびに実行
     paths:
-      - "backend/**"
+      - "backend/**" # push と同様、backend に関係ない PR では実行しない
 
   workflow_dispatch: # Actions タブの「Run workflow」ボタンで手動実行できるようにする
+    # デバッグ目的や「ブランチ戦略外のタイミングで確認したい」時に便利
 
 # ---------- ジョブ定義 ----------
 jobs:
   # ════════════════════════════════
   # ジョブ① test
-  #   複数の Node.js バージョンで並列テストする
+  #   matrix を使って複数の Node.js バージョンで同時並列テストする
+  #
+  #   なぜ複数バージョン？
+  #     Node.js はバージョンによって動作が変わることがある
+  #     20.x（LTS）で動いても 24.x で壊れる可能性があるため
+  #     複数バージョンで確認することでバージョン互換性を担保する
   # ════════════════════════════════
   test:
+    # Actions 画面に表示されるジョブ名
+    # matrix.node-version が展開されて「Test (Node 20.x)」「Test (Node 22.x)」のように表示される
     name: Test (Node ${{ matrix.node-version }})
+
+    # ジョブを動かす仮想マシンの OS
+    # ubuntu-latest = GitHub が管理する Ubuntu の最新安定版（無料枠の消費が最も少ない）
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        # Node.js の複数バージョンで並列テストする（バージョン互換性の確認）
+        # ここに書いたバージョンの数だけジョブが並列で起動する
+        # 現在 3 バージョン → 3 つのジョブが同時に走る
         node-version: [20.x, 22.x, 24.x]
+        # 20.x = LTS（長期サポート版）: 本番環境でよく使われる
+        # 22.x = 前世代 LTS: まだ広く使われているため互換性確認に含める
+        # 24.x = 最新版: 将来の移行を見越して動作確認する
 
     defaults:
       run:
-        # 以降の run コマンドはすべて backend/ ディレクトリ内で実行される
+        # このジョブの全 run ステップを backend/ ディレクトリ内で実行する
+        # 各ステップに「cd backend &&」と書く代わりにここで一括指定できる
         working-directory: backend
 
     steps:
-      # リポジトリのコードを ubuntu-latest 上にチェックアウトする
+      # ━━━ Step 1: コードの取得 ━━━
+      # actions/checkout@v4 でリポジトリのコードをランナーにダウンロードする
+      # これがないと npm ci も tsc も実行できない
       - uses: actions/checkout@v4
 
+      # ━━━ Step 2: Node.js のセットアップ ━━━
       - name: Node.js ${{ matrix.node-version }} をセットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }} # matrix で指定したバージョンを使用
-          cache: "npm" # node_modules を GitHub のキャッシュに保存して次回以降を高速化
-          cache-dependency-path: backend/package-lock.json # package-lock.json のハッシュでキャッシュを識別
+          node-version: ${{ matrix.node-version }} # matrix で指定したバージョンをインストール
+          cache:
+            "npm" # node_modules を GitHub キャッシュに保存し
+            # 2回目以降の npm ci を高速化する
+          cache-dependency-path: backend/package-lock.json
+          # ↑ package-lock.json の内容が変わった時だけキャッシュを再生成する
+          #   変わっていなければキャッシュから復元するので数十秒の節約になる
 
+      # ━━━ Step 3: 依存パッケージのインストール ━━━
       - name: 依存関係インストール
-        # npm ci = package-lock.json を厳密に使ってクリーンインストール（再現性が高い）
+        # npm install ではなく npm ci を使う理由:
+        #   npm install → package.json を見て最新互換バージョンをインストール（環境によって差が出る）
+        #   npm ci      → package-lock.json を厳密に再現（誰がどこで実行しても同じ結果になる）
+        # CI では必ず npm ci を使うことで「ローカルでは動いたのに CI では落ちた」を防ぐ
         run: npm ci
 
+      # ━━━ Step 4: TypeScript 型チェック ━━━
       - name: TypeScript 型チェック
-        # --noEmit = JS ファイルを出力せず型エラーだけチェックする
+        # tsc --noEmit で型エラーのみチェックする（JS ファイルは出力しない）
+        # npm run build との違い: build は dist/ に JS を出力するが
+        # ここでは出力不要なので --noEmit で高速に型だけ検査する
         run: npx tsc --noEmit
 
+      # ━━━ Step 5: Lint（静的解析） ━━━
+      - name: Lint
+        # ESLint でコードの問題を静的に検出する
+        # 実行時エラーにはならないが品質上問題のあるコードパターンを検知する
+        # 例: 未使用変数、型の誤用、潜在的バグなど
+        run: npm run lint
+
+      # ━━━ Step 6: ユニットテスト ━━━
       - name: ユニットテスト実行
-        # --ci: CI 環境向けの厳格モード  --forceExit: ハング防止
+        # npm run test:ci の内容（package.json 参照）:
+        #   jest --config jest.config.js --coverage --ci --forceExit
+        #   --coverage:   テスト実行と同時にカバレッジレポートを coverage/ に生成する
+        #   --ci:         スナップショットの自動更新を無効化（CI では変更を自動適用しない）
+        #   --forceExit:  テスト後に残った非同期処理（DB接続等）を強制終了してハングを防ぐ
         run: npm run test:ci
 
+      # ━━━ Step 7: カバレッジレポートの保存 ━━━
       - name: カバレッジを Artifacts にアップロード
         uses: actions/upload-artifact@v4
-        # Node 20.x の時だけアップロード（22.x でも同じものが生成されるので重複を避ける）
+        # 3バージョン全部でアップロードすると同じファイルが3つできてしまうため
+        # 代表として Node 20.x の時だけアップロードする
         if: matrix.node-version == '20.x'
         with:
-          name: backend-coverage
-          path: backend/coverage/ # coverage/ フォルダ全体をアップロード
-          retention-days: 7 # 7日後に自動削除（容量節約）
+          name: backend-coverage # Actions タブの「Artifacts」セクションに表示される名前
+          path: backend/coverage/ # Jest が生成したカバレッジレポート（HTML・JSON等）
+          retention-days: 7 # 7日後に自動削除（Artifacts はストレージを消費するため）
 
   # ════════════════════════════════
   # ジョブ② build
-  #   test ジョブが全バージョンで成功した後にビルドを実行
-  #   → "ビルドできる" ことを CI で保証する
+  #   test ジョブが全バージョンで成功した後にビルドを実行する
+  #
+  #   なぜ CI でもビルドする？
+  #     テストが通っても TypeScript → JS のコンパイルが通るとは限らない
+  #     「テストは通るがデプロイしたら起動しなかった」を防ぐため
+  #     CI の段階で「ビルドできる」ことも保証する
   # ════════════════════════════════
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test # test ジョブが成功した時だけ実行される（失敗したらスキップ）
+    # needs: で依存ジョブを指定する
+    # test ジョブが全マトリクス（20.x / 22.x / 24.x）で成功した場合のみ実行される
+    # test が 1 つでも失敗したらこのジョブはスキップされる
+    needs: test
 
     defaults:
       run:
@@ -106,19 +176,83 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20.x" # ビルドは LTS の 20.x 固定
+          node-version: "20.x" # ビルドは LTS の 20.x に固定（本番環境と合わせる）
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
       - run: npm ci
 
       - name: TypeScript をコンパイル
-        # tsconfig.json の設定に従って src/ を dist/ に JS 変換する
+        # tsconfig.json の outDir 設定に従って src/*.ts を dist/*.js に変換する
+        # ここで型エラー・構文エラーが出れば CI が失敗する
         run: npm run build
 
       - name: ビルド成果物を Artifacts にアップロード
+        # dist/ を保存しておくことで「CIが通った時のビルド結果」を確認できる
+        # deploy-dev ジョブもこの Artifact から dist/ を取得する
         uses: actions/upload-artifact@v4
         with:
-          name: backend-dist # Artifacts のファイル名
-          path: backend/dist/ # コンパイル後の JS ファイル群
-          retention-days: 7 # 7日後に自動削除
+          name: backend-dist # Artifacts の表示名
+          path: backend/dist/ # tsc が出力した JS ファイル群
+          retention-days: 7 # 7日後に自動削除（容量節約）
+
+  # ════════════════════════════════
+  # ジョブ④ deploy-dev
+  #   develop への push 時のみ dev 環境へ自動デプロイする
+  #   build ジョブ上でコンパイル済みの dist/ を再利用し、
+  #   本番用 node_modules を再入れして zip 化して Azure へ出荷する
+  # ════════════════════════════════
+  deploy-dev:
+    name: Deploy to dev
+    runs-on: ubuntu-latest
+    needs: build
+    # develop への push（自動トリガー）の時のみ実行する
+    # staging/main への PR 時や手動実行時はスキップ
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    environment: dev # dev Environment のシークレット（接続先・認証情報）を使う
+
+    env:
+      AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
+
+    steps:
+      # ━━━ Step 1: dist/ を Artifact から取得 ━━━
+      - name: dist/ を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dist # build ジョブでアップロードした名前と一致させる
+          path: dist/ # ダウンロード先ディレクトリ
+
+      # ━━━ Step 2: 本番用 node_modules をインストール ━━━
+      - name: package.json を checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            backend/package.json
+            backend/package-lock.json
+          sparse-checkout-cone-mode: false
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 本番用 node_modules をインストール
+        # --omit=dev で jest 等開発ツールを除外し zip サイズを削減する
+        run: npm ci --omit=dev
+        working-directory: backend
+
+      # ━━━ Step 3: デプロイ用 zip を作成 ━━━
+      - name: デプロイパッケージを zip に圧縮
+        run: zip -r backend-deploy.zip dist/ backend/node_modules/ backend/package.json
+
+      # ━━━ Step 4: Azure へのデプロイ ━━━
+      - name: Azure App Service (dev) にデプロイ
+        # AZURE_WEBAPP_PUBLISH_PROFILE が未設定の場合はスキップする
+        if: env.AZURE_CONFIGURED == 'true'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend-deploy.zip

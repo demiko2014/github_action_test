@@ -1,76 +1,106 @@
-# ==============================================
+﻿# ==============================================
 # Backend デプロイワークフロー（全環境統合）
 #
-# ブランチ戦略:
-#   feature/* → develop → staging → main
-#                  ↓          ↓        ↓
-#                 dev        stg      prd
+# 【役割の整理】
+#   ci-backend.yml → コードの品質チェック（テスト・Lint・ビルド）/ 自動実行
+#   このファイル   → Azure App Service へのデプロイ             / 手動実行のみ
 #
-# フロー図（GitHub Actions ポータルでビジュアル表示される）:
+# 【トリガー】
+#   Actions タブ →「Run workflow」→ 環境（dev / stg / prd）を選択 → 実行
+#   push や PR では自動実行されない（意図しないデプロイを防ぐ）
 #
-#          ┌──────────┐
-#          │  build   │
-#          └──┬───┬───┘
-#             ↓        ↓
-#   ┌───────────┐  ┌───────────┐
-#   │ deploy-dev │  │ deploy-stg │  ← 並列実行（各ブランチで Skipped）
-#   └───┬─────┘  └─────┬───┘
-#             ↓        ↓
-#          ┌───┴──────┘
-#          │ deploy-prd │  ← 一番下に表示（main の時だけ実行）
-#          └───────────┘
+# 【ジョブ構成とフロー図】
+#   GitHub Actions ポータルでは以下のようにビジュアル表示される:
 #
-# always() により deploy-dev/stg が Skipped でも deploy-prd が自分の条件で判定できる
+#                   ┌──────────┐
+#                   │  build   │  ← TypeScript をコンパイルして zip を作成
+#                   └────┬─────┘
+#          ┌─────────────┼─────────────┐
+#          ↓             ↓             ↓
+#   ┌────────────┐ ┌────────────┐ ┌────────────┐
+#   │ deploy-dev │ │ deploy-stg │ │ deploy-prd │  ← 選択した環境のみ実行、他は Skipped
+#   └────────────┘ └────────────┘ └────────────┘
+#                                   ↑ prd は Required reviewers で承認待ちになる
 #
-# 事前準備（初回のみ）:
-#   1. Azure Portal で App Service を 3 つ作成（dev/stg/prd 各 Node.js 20 / Linux）
+# 【なぜ 3 ジョブを並列に並べるのか？】
+#   deploy-dev / deploy-stg / deploy-prd は全て「needs: build」のみを持つ
+#   → GitHub Actions は依存関係が同じジョブを同じ層（横並び）に表示する
+#   → ポータルで「build → 3 環境」という一目でわかるフロー図になる
+#   → 選択された環境以外は if 条件で Skipped になるため実際には 1 つしか動かない
+#
+# 【GitHub Environments とは？】
+#   Settings → Environments で作成する環境ごとの設定グループ
+#   環境ごとに異なるシークレット（接続先・認証情報）を持てる
+#   prd には「Required reviewers（承認者）」を設定することで
+#   デプロイ前に人間の承認ステップを強制できる
+#
+# 【初回セットアップ手順】
+#   1. Azure Portal で App Service を 3 つ作成
+#        名前例: myapp-backend-dev / myapp-backend-stg / myapp-backend-prd
+#        ランタイム: Node.js 20 LTS / OS: Linux
 #   2. 各 App Service の「発行プロファイル」をダウンロード
-#   3. GitHub Settings→Environments で「dev」「stg」「prd」を作成
-#   4. 各 Environment の Secrets に以下を登録:
-#        AZURE_WEBAPP_NAME           = App Service のリソース名
-#        AZURE_WEBAPP_PUBLISH_PROFILE = 発行プロファイルの XML 全文
-#   5. prd Environment の「Required reviewers」に承認者を追加（推奨）
+#        App Service → 概要 →「発行プロファイルの取得」→ XML ファイル保存
+#   3. GitHub リポジトリの Settings → Environments で「dev」「stg」「prd」を作成
+#   4. 各 Environment に以下の Secrets を登録:
+#        AZURE_WEBAPP_NAME            = App Service のリソース名（例: myapp-backend-dev）
+#        AZURE_WEBAPP_PUBLISH_PROFILE = 手順 2 でダウンロードした XML の全文
+#   5. prd Environment に「Required reviewers」を追加
+#        → デプロイ前に承認者にメール通知が届き、承認するまでジョブが待機する
 # ==============================================
 
-name: Deploy Backend
+name: Deploy to Azure App Service
 
-# 実行一覧に表示されるタイトル（例: "Deploy Backend: feat: add card scan"）
-run-name: "Deploy Backend: ${{ github.event.head_commit.message || github.event_name }}"
+# 実行一覧に表示されるタイトル
+# 例: 「Deploy to Azure App Service (prd): demiko2014」
+run-name: "Deploy to Azure App Service (${{ inputs.environment }}): ${{ github.actor }}"
 
 # ---------- トリガー設定 ----------
+# workflow_dispatch は「Actions タブ → Run workflow」ボタンからだけ起動される
+# push や PR では実行されないため、意図しないデプロイが発生しない
 on:
-  push:
-    branches:
-      - develop # develop マージ → dev 環境へデプロイ
-      - staging # staging マージ → stg 環境へデプロイ
-      - main # main マージ    → prd 環境へデプロイ
-    paths:
-      - "backend/**" # backend/ 以外の変更（README 等）ではデプロイしない
-
-  workflow_dispatch: # 手動実行（緊急デプロイ・再デプロイ用）
-    inputs:
+  workflow_dispatch:
+    inputs: # 実行時に入力できるパラメータを定義する
       environment:
         description: "デプロイ先の環境を選択"
-        required: true
-        default: "dev"
-        type: choice
+        required: true # 未選択での実行を防ぐ
+        default: "dev" # デフォルトは最も影響の小さい dev
+        type: choice # ドロップダウン形式で選択させる（自由入力より安全）
         options: [dev, stg, prd]
 
 # ---------- 共通設定 ----------
 env:
-  NODE_VERSION: "20.x"
-  # secrets は if 式内で直接参照できないため env 経由でチェックする
+  NODE_VERSION: "20.x" # 全ジョブで使う Node.js バージョンをここで一元管理する
+
+  # 【AZURE_CONFIGURED の仕組み】
+  # GitHub Actions の仕様上、secrets は job の if「ジョブ実行条件」内で直接使えない
+  # （セキュリティ上の理由でシークレット値は if 式内で評価されない）
+  # そのため env 変数に「設定済みかどうか」を真偽値として展開し
+  # ステップの if 条件で「env.AZURE_CONFIGURED == 'true'」として参照する
   AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
 
 # ---------- ジョブ定義 ----------
 jobs:
   # ════════════════════════════════════════════════════════
   # ジョブ① build
-  #   TypeScript → JS にコンパイルして zip を作成し Artifact に保存する
-  #   全ブランチ共通処理なので Environment（dev/stg/prd）を使わない
+  #   TypeScript を JS にコンパイルし、本番用の node_modules と一緒に zip にまとめる
+  #   この zip を Artifact に保存し、後続の deploy-* ジョブが受け取る
+  #
+  #   【なぜ別ジョブに分ける？】
+  #     deploy-dev / deploy-stg / deploy-prd はそれぞれ別ランナーで実行される
+  #     同じビルドを 3 回繰り返すのは無駄なので、先に 1 回だけビルドして
+  #     Artifact 経由で共有することで時間・コストを削減する
+  #
+  #   【ビルド成果物の内容（zip に含まれるもの）】
+  #     dist/          ← tsc が生成した JS ファイル
+  #     node_modules/  ← --omit=dev で本番用のみ（jest 等開発ツールは除外）
+  #     package.json   ← Azure App Service が起動スクリプトを読むため必要
+  #
+  #   【environment（dev/stg/prd）を使わない理由】
+  #     build はどの環境向けでも同じビルド成果物になる
+  #     環境固有のシークレットが不要なため Environment を指定しない
   # ════════════════════════════════════════════════════════
   build:
-    name: 0. Build
+    name: Build
     runs-on: ubuntu-latest
 
     defaults:
@@ -83,76 +113,95 @@ jobs:
       - name: Node.js をセットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ env.NODE_VERSION }} # 上の env.NODE_VERSION を参照
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
+      # ━━━ Step 1: 全依存パッケージをインストール ━━━
       - name: 依存関係インストール（全パッケージ）
-        run: npm ci # tsc を使うため devDependencies も含めてインストール
+        # devDependencies も含めてインストールする
+        # tsc（TypeScript コンパイラ）は devDependencies に入っているため
+        # 次のコンパイルステップで必要になる
+        run: npm ci
 
+      # ━━━ Step 2: TypeScript → JavaScript に変換 ━━━
       - name: TypeScript をコンパイル
+        # tsconfig.json の outDir に従って src/*.ts を dist/*.js に変換する
+        # この時点で型エラーがあれば失敗する（CI のおかげで本番に届かない）
         run: npm run build # src/*.ts → dist/*.js
 
+      # ━━━ Step 3: 本番用の node_modules に入れ替え ━━━
       - name: 本番用 node_modules を再インストール
-        run: npm ci --omit=dev # jest や ts-node などの開発ツールを除外してサイズ削減
+        # --omit=dev で devDependencies を除外する
+        # jest / ts-node / typescript など開発ツールは本番環境で不要
+        # これにより zip サイズを大幅削減し、デプロイ速度が上がる
+        run: npm ci --omit=dev
 
+      # ━━━ Step 4: デプロイ用 zip を作成 ━━━
       - name: デプロイパッケージを zip に圧縮
+        # Azure App Service は zip ファイルを受け取ってそのまま展開する
+        # -r = ディレクトリを再帰的に含める
+        # ../backend-deploy.zip = working-directory（backend/）の 1 つ上に出力
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
+      # ━━━ Step 5: Artifact にアップロード ━━━
       - name: zip を Artifact にアップロード
-        # deploy-dev/stg/prd は別ランナーで動くため Artifact 経由でファイルを渡す
+        # deploy-* ジョブは別ランナーで起動するため Artifact 経由でファイルを渡す
         uses: actions/upload-artifact@v4
         with:
-          name: backend-deploy-zip
+          name: backend-deploy-zip # deploy-* ジョブでこの名前を指定してダウンロードする
           path: backend-deploy.zip
-          retention-days: 1 # デプロイ後は不要なので 1 日で自動削除
+          retention-days: 1 # デプロイ完了後は不要なので 1 日で自動削除
 
   # ════════════════════════════════════════════════════════
   # ジョブ② deploy-dev
-  #   build 成功後、develop ブランチの時だけ dev 環境へデプロイ
-  #   それ以外のブランチでは Skipped になる
+  #   environment = dev を選んで実行した時のみ dev 環境へデプロイ（他は Skipped）
   #
-  #   フロー図（GitHub Actions ポータル）:
-  #     build
-  #       ↓
-  #     deploy-dev   ← ここ
-  #       ↓
-  #     deploy-stg
-  #       ↓
-  #     deploy-prd
+  #   【environment: dev の効果】
+  #     Settings → Environments → dev に登録したシークレットがこのジョブ内で有効になる
+  #     dev / stg / prd はそれぞれ別の App Service に接続するため
+  #     環境ごとに異なるシークレットを使い分ける仕組みになっている
   # ════════════════════════════════════════════════════════
-  deploy-1-dev:
-    name: 1. Deploy to dev
-    needs: build # build が成功した後に実行される
-    # develop ブランチ以外では Skipped になる
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+  deploy-dev:
+    name: Deploy to dev
+    needs: build # build ジョブが成功した後に実行される
+    if: inputs.environment == 'dev' # dev 以外を選択した場合は Skipped
     runs-on: ubuntu-latest
-    environment: dev # dev Environment のシークレットを使う
+    environment: dev # dev Environment のシークレット（接続先・認証情報）を使う
 
     steps:
+      # ━━━ Step 1: zip の取得 ━━━
       - name: zip を Artifact からダウンロード
         uses: actions/download-artifact@v4
         with:
-          name: backend-deploy-zip
+          name: backend-deploy-zip # build ジョブでアップロードした名前と一致させる
 
+      # ━━━ Step 2: Azure へのデプロイ ━━━
       - name: Azure App Service (dev) にデプロイ
+        # AZURE_WEBAPP_PUBLISH_PROFILE が未設定の場合はスキップする
+        # セットアップ前でもワークフロー自体は成功させられる
         if: env.AZURE_CONFIGURED == 'true'
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # App Service のリソース名
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # 発行プロファイル XML
           package: backend-deploy.zip
 
   # ════════════════════════════════════════════════════════
   # ジョブ③ deploy-stg
-  #   build 成功後、staging ブランチの時だけ stg 環境へデプロイ（deploy-dev と並列）
+  #   environment = stg を選んで実行した時のみ stg 環境へデプロイ（他は Skipped）
+  #   deploy-dev と needs が同じ「build」なので Actions 画面では横並びに表示される
+  #
+  #   【environment: stg の効果】
+  #     dev とは別の App Service・別の発行プロファイルを使う
+  #     Settings → Environments → stg のシークレットが有効になる
   # ════════════════════════════════════════════════════════
-  deploy-2-stg:
-    name: 2. Deploy to stg
-    needs: build # deploy-dev と同じ層に並列表示される
-    if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/staging') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
+  deploy-stg:
+    name: Deploy to stg
+    needs: build
+    if: inputs.environment == 'stg'
     runs-on: ubuntu-latest
-    environment: stg
+    environment: stg # stg Environment のシークレットを使う（dev とは別の接続先）
 
     steps:
       - name: zip を Artifact からダウンロード
@@ -170,16 +219,22 @@ jobs:
 
   # ════════════════════════════════════════════════════════
   # ジョブ④ deploy-prd
-  #   deploy-dev と deploy-stg の両方を needs に指定 → 一番下に表示される
-  #   always() により両ジョブが Skipped でも自分の if 条件で独立して判定できる
-  #   prd Environment に Required reviewers を設定すると承認待ちで停止（本番誤デプロイ防止）
+  #   environment = prd を選んで実行した時のみ本番環境へデプロイ（他は Skipped）
+  #   deploy-dev / deploy-stg と同じ「build」を needs にするので横並びに表示される
+  #
+  #   【本番デプロイの安全策: Required reviewers】
+  #     Settings → Environments → prd → Protection rules
+  #     → Required reviewers に承認者を追加すると
+  #     このジョブが起動した直後に「承認待ち」で一時停止する
+  #     指定した承認者がボタンを押すまでデプロイは始まらない
+  #     → 誤って prd を選んでしまった場合でも承認者が気づいてキャンセルできる
   # ════════════════════════════════════════════════════════
-  deploy-3-prd:
-    name: 3. Deploy to prd
-    needs: build # dev/stg と同じ層に並列表示される
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
+  deploy-prd:
+    name: Deploy to prd
+    needs: build
+    if: inputs.environment == 'prd'
     runs-on: ubuntu-latest
-    environment: prd
+    environment: prd # prd Environment（Required reviewers 設定済み）のシークレットを使う
 
     steps:
       - name: zip を Artifact からダウンロード

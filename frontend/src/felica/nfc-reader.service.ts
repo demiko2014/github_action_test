@@ -1,5 +1,4 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
-import { EventEmitter } from "events";
 import {
   FelicaService,
   CardInfo,
@@ -7,8 +6,7 @@ import {
   SERVICE_CODE_TRANSPORT_BALANCE,
 } from "./felica.service";
 
-// nfc-pcsc は実行時に動的 import（ネイティブビルドが必要なため）
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// nfc-pcsc は実行時に動的 require（ネイティブビルドが必要なため ESM export なし）
 const { NFC } = require("nfc-pcsc");
 
 export type ReadMode = "info" | "balance";
