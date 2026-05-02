@@ -177,7 +177,8 @@ jobs:
   deploy-prd:
     name: 3. Deploy to prd
     needs: build # dev/stg と同じ層に並列表示される
-    if: always() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
+    runs-on: ubuntu-latest
     environment: prd
 
     steps:
