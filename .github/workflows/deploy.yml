@@ -1,0 +1,184 @@
+# ==============================================
+# Backend デプロイワークフロー（全環境統合）
+#
+# ブランチ戦略:
+#   feature/* → develop → staging → main
+#                  ↓          ↓        ↓
+#                 dev        stg      prd
+#
+# フロー図（GitHub Actions ポータルでビジュアル表示される）:
+#
+#         ┌─────────────────────┐
+#         │        build        │
+#         └──────────┬──────────┘
+#                    │ needs: build
+#          ┌─────────┼─────────┐
+#          ↓         ↓         ↓
+#     [deploy-dev] [deploy-stg] [deploy-prd]
+#      (developのみ) (stagingのみ) (mainのみ)
+#
+# ジョブが if 条件で分岐するため、ブランチに応じた
+# デプロイジョブだけが実行され残りは Skipped になる
+#
+# 事前準備（初回のみ）:
+#   1. Azure Portal で App Service を 3 つ作成（dev/stg/prd 各 Node.js 20 / Linux）
+#   2. 各 App Service の「発行プロファイル」をダウンロード
+#   3. GitHub Settings→Environments で「dev」「stg」「prd」を作成
+#   4. 各 Environment の Secrets に以下を登録:
+#        AZURE_WEBAPP_NAME           = App Service のリソース名
+#        AZURE_WEBAPP_PUBLISH_PROFILE = 発行プロファイルの XML 全文
+#   5. prd Environment の「Required reviewers」に承認者を追加（推奨）
+# ==============================================
+
+name: Deploy Backend
+
+# 実行一覧に表示されるタイトル（例: "Deploy Backend: feat: add card scan"）
+run-name: "Deploy Backend: ${{ github.event.head_commit.message || github.event_name }}"
+
+# ---------- トリガー設定 ----------
+on:
+  push:
+    branches:
+      - develop # develop マージ → dev 環境へデプロイ
+      - staging # staging マージ → stg 環境へデプロイ
+      - main # main マージ    → prd 環境へデプロイ
+    paths:
+      - "backend/**" # backend/ 以外の変更（README 等）ではデプロイしない
+
+  workflow_dispatch: # 手動実行（緊急デプロイ・再デプロイ用）
+    inputs:
+      environment:
+        description: "デプロイ先の環境を選択"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, stg, prd]
+
+# ---------- 共通設定 ----------
+env:
+  NODE_VERSION: "20.x"
+  # secrets は if 式内で直接参照できないため env 経由でチェックする
+  AZURE_CONFIGURED: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
+
+# ---------- ジョブ定義 ----------
+jobs:
+  # ════════════════════════════════════════════════════════
+  # ジョブ① build
+  #   TypeScript → JS にコンパイルして zip を作成し Artifact に保存する
+  #   全ブランチ共通処理なので Environment（dev/stg/prd）を使わない
+  # ════════════════════════════════════════════════════════
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 依存関係インストール（全パッケージ）
+        run: npm ci # tsc を使うため devDependencies も含めてインストール
+
+      - name: TypeScript をコンパイル
+        run: npm run build # src/*.ts → dist/*.js
+
+      - name: 本番用 node_modules を再インストール
+        run: npm ci --omit=dev # jest や ts-node などの開発ツールを除外してサイズ削減
+
+      - name: デプロイパッケージを zip に圧縮
+        run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
+
+      - name: zip を Artifact にアップロード
+        # deploy-dev/stg/prd は別ランナーで動くため Artifact 経由でファイルを渡す
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-deploy-zip
+          path: backend-deploy.zip
+          retention-days: 1 # デプロイ後は不要なので 1 日で自動削除
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ② deploy-dev
+  #   build 成功後、develop ブランチの時だけ dev 環境へデプロイ
+  #   それ以外のブランチでは Skipped になる
+  # ════════════════════════════════════════════════════════
+  deploy-dev:
+    name: Deploy to dev
+    needs: build # ← build と矢印でつながってビジュアル表示される
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    runs-on: ubuntu-latest
+    environment: dev # dev Environment のシークレットを使う
+
+    steps:
+      - name: zip を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-deploy-zip
+
+      - name: Azure App Service (dev) にデプロイ
+        if: env.AZURE_CONFIGURED == 'true'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend-deploy.zip
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ③ deploy-stg
+  #   build 成功後、staging ブランチの時だけ stg 環境へデプロイ
+  # ════════════════════════════════════════════════════════
+  deploy-stg:
+    name: Deploy to stg
+    needs: build
+    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg')
+    runs-on: ubuntu-latest
+    environment: stg # stg Environment のシークレットを使う
+
+    steps:
+      - name: zip を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-deploy-zip
+
+      - name: Azure App Service (stg) にデプロイ
+        if: env.AZURE_CONFIGURED == 'true'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend-deploy.zip
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ④ deploy-prd
+  #   build 成功後、main ブランチの時だけ prd 環境へデプロイ
+  #   prd Environment に Required reviewers を設定すると
+  #   このジョブが始まる前に「Waiting for approval」で停止する（本番誤デプロイ防止）
+  # ════════════════════════════════════════════════════════
+  deploy-prd:
+    name: Deploy to prd
+    needs: build
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
+    runs-on: ubuntu-latest
+    environment: prd # prd Environment のシークレット + Required reviewers を使う
+
+    steps:
+      - name: zip を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-deploy-zip
+
+      - name: Azure App Service (prd) にデプロイ
+        if: env.AZURE_CONFIGURED == 'true'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend-deploy.zip
