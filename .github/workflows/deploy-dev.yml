@@ -21,6 +21,10 @@
 # Actions タブに表示されるワークフロー名（ファイル名でなくこちらが表示される）
 name: Deploy to dev
 
+# 個別のワークフロー実行のタイトル（実行一覧画面に表示される）
+# 例: "Deploy to dev: feat: add card scan endpoint"
+run-name: "Deploy to dev: ${{ github.event.head_commit.message || github.event_name }}"
+
 # ---------- トリガー設定 ----------
 on:
   push:

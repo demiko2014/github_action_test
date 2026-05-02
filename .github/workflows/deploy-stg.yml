@@ -20,6 +20,9 @@
 
 name: Deploy to stg
 
+# 個別のワークフロー実行のタイトル
+run-name: "Deploy to stg: ${{ github.event.head_commit.message || github.event_name }}"
+
 # ---------- トリガー設定 ----------
 on:
   push:
