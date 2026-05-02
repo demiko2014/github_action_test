@@ -8,23 +8,19 @@
 #
 # フロー図（GitHub Actions ポータルでビジュアル表示される）:
 #
-#   ┌──────────┐
-#   │  build   │
-#   └────┬─────┘
-#        ↓ needs: build
-#   ┌────┴─────────┐
-#   │ deploy-dev   │ ← develop push の時だけ実行、他は Skipped
-#   └────┬─────────┘
-#        ↓ needs: [build, deploy-dev]
-#   ┌────┴─────────┐
-#   │ deploy-stg   │ ← staging push の時だけ実行、他は Skipped
-#   └────┬─────────┘
-#        ↓ needs: [build, deploy-stg]
-#   ┌────┴─────────┐
-#   │ deploy-prd   │ ← main push の時だけ実行、他は Skipped
-#   └─────────────┘
+#          ┌──────────┐
+#          │  build   │
+#          └──┬───┬───┘
+#             ↓        ↓
+#   ┌───────────┐  ┌───────────┐
+#   │ deploy-dev │  │ deploy-stg │  ← 並列実行（各ブランチで Skipped）
+#   └───┬─────┘  └─────┬───┘
+#             ↓        ↓
+#          ┌───┴──────┘
+#          │ deploy-prd │  ← 一番下に表示（main の時だけ実行）
+#          └───────────┘
 #
-# always() により前のジョブが Skipped でも次のジョブが自分の条件で判定できる
+# always() により deploy-dev/stg が Skipped でも deploy-prd が自分の条件で判定できる
 #
 # 事前準備（初回のみ）:
 #   1. Azure Portal で App Service を 3 つ作成（dev/stg/prd 各 Node.js 20 / Linux）
@@ -149,16 +145,14 @@ jobs:
 
   # ════════════════════════════════════════════════════════
   # ジョブ③ deploy-stg
-  #   deploy-dev の下段に縦に並んで表示される
-  #   always() により deploy-dev が Skipped でも自分の if 条件で判定できる
+  #   build 成功後、staging ブランチの時だけ stg 環境へデプロイ（deploy-dev と並列）
   # ════════════════════════════════════════════════════════
   deploy-stg:
     name: Deploy to stg
-    needs: [build, deploy-dev] # deploy-dev の下に縦に並ぶ
-    # always() = 前のジョブが Skipped でもこのジョブを評価する
-    if: always() && (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
+    needs: build # deploy-dev と同じ層に並列表示される
+    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg')
     runs-on: ubuntu-latest
-    environment: stg # stg Environment のシークレットを使う
+    environment: stg
 
     steps:
       - name: zip を Artifact からダウンロード
@@ -176,16 +170,16 @@ jobs:
 
   # ════════════════════════════════════════════════════════
   # ジョブ④ deploy-prd
-  #   deploy-stg の下段＝一番下に表示される
-  #   prd Environment に Required reviewers を設定すると
-  #   このジョブが始まる前に「Waiting for approval」で停止する（本番誤デプロイ防止）
+  #   deploy-dev と deploy-stg の両方を needs に指定 → 一番下に表示される
+  #   always() により両ジョブが Skipped でも自分の if 条件で独立して判定できる
+  #   prd Environment に Required reviewers を設定すると承認待ちで停止（本番誤デプロイ防止）
   # ════════════════════════════════════════════════════════
   deploy-prd:
     name: Deploy to prd
-    needs: [build, deploy-stg] # deploy-stg の下に縦に並ぶ → 一番下
+    needs: [deploy-dev, deploy-stg] # 両方を待つ → ダイヤモンド形の一番下に表示される
     if: always() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))
     runs-on: ubuntu-latest
-    environment: prd # prd Environment のシークレット + Required reviewers を使う
+    environment: prd
 
     steps:
       - name: zip を Artifact からダウンロード
