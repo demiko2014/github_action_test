@@ -8,17 +8,23 @@
 #
 # フロー図（GitHub Actions ポータルでビジュアル表示される）:
 #
-#         ┌─────────────────────┐
-#         │        build        │
-#         └──────────┬──────────┘
-#                    │ needs: build
-#          ┌─────────┼─────────┐
-#          ↓         ↓         ↓
-#     [deploy-dev] [deploy-stg] [deploy-prd]
-#      (developのみ) (stagingのみ) (mainのみ)
+#   ┌──────────┐
+#   │  build   │
+#   └────┬─────┘
+#        ↓ needs: build
+#   ┌────┴─────────┐
+#   │ deploy-dev   │ ← develop push の時だけ実行、他は Skipped
+#   └────┬─────────┘
+#        ↓ needs: [build, deploy-dev]
+#   ┌────┴─────────┐
+#   │ deploy-stg   │ ← staging push の時だけ実行、他は Skipped
+#   └────┬─────────┘
+#        ↓ needs: [build, deploy-stg]
+#   ┌────┴─────────┐
+#   │ deploy-prd   │ ← main push の時だけ実行、他は Skipped
+#   └─────────────┘
 #
-# ジョブが if 条件で分岐するため、ブランチに応じた
-# デプロイジョブだけが実行され残りは Skipped になる
+# always() により前のジョブが Skipped でも次のジョブが自分の条件で判定できる
 #
 # 事前準備（初回のみ）:
 #   1. Azure Portal で App Service を 3 つ作成（dev/stg/prd 各 Node.js 20 / Linux）
@@ -109,10 +115,20 @@ jobs:
   # ジョブ② deploy-dev
   #   build 成功後、develop ブランチの時だけ dev 環境へデプロイ
   #   それ以外のブランチでは Skipped になる
+  #
+  #   フロー図（GitHub Actions ポータル）:
+  #     build
+  #       ↓
+  #     deploy-dev   ← ここ
+  #       ↓
+  #     deploy-stg
+  #       ↓
+  #     deploy-prd
   # ════════════════════════════════════════════════════════
   deploy-dev:
     name: Deploy to dev
-    needs: build # ← build と矢印でつながってビジュアル表示される
+    needs: build # build が成功した後に実行される
+    # develop ブランチ以外では Skipped になる
     if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
     runs-on: ubuntu-latest
     environment: dev # dev Environment のシークレットを使う
@@ -133,12 +149,14 @@ jobs:
 
   # ════════════════════════════════════════════════════════
   # ジョブ③ deploy-stg
-  #   build 成功後、staging ブランチの時だけ stg 環境へデプロイ
+  #   deploy-dev の下段に縦に並んで表示される
+  #   always() により deploy-dev が Skipped でも自分の if 条件で判定できる
   # ════════════════════════════════════════════════════════
   deploy-stg:
     name: Deploy to stg
-    needs: build
-    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg')
+    needs: [build, deploy-dev] # deploy-dev の下に縦に並ぶ
+    # always() = 前のジョブが Skipped でもこのジョブを評価する
+    if: always() && (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
     runs-on: ubuntu-latest
     environment: stg # stg Environment のシークレットを使う
 
@@ -158,14 +176,14 @@ jobs:
 
   # ════════════════════════════════════════════════════════
   # ジョブ④ deploy-prd
-  #   build 成功後、main ブランチの時だけ prd 環境へデプロイ
+  #   deploy-stg の下段＝一番下に表示される
   #   prd Environment に Required reviewers を設定すると
   #   このジョブが始まる前に「Waiting for approval」で停止する（本番誤デプロイ防止）
   # ════════════════════════════════════════════════════════
   deploy-prd:
     name: Deploy to prd
-    needs: build
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
+    needs: [build, deploy-stg] # deploy-stg の下に縦に並ぶ → 一番下
+    if: always() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))
     runs-on: ubuntu-latest
     environment: prd # prd Environment のシークレット + Required reviewers を使う
 
