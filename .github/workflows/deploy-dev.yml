@@ -43,13 +43,14 @@ env:
 
 # ---------- ジョブ定義 ----------
 jobs:
-  deploy:
-    name: Build & Deploy to dev
+  # ════════════════════════════════════════════════════════
+  # ジョブ① build
+  #   TypeScript → JS にコンパイルして zip を作成し Artifact に保存する
+  #   環境（dev/stg/prd）に依存しない純粋なビルド処理なので Environment を使わない
+  # ════════════════════════════════════════════════════════
+  build:
+    name: Build
     runs-on: ubuntu-latest
-
-    # GitHub Environments の「dev」を指定する
-    # → この環境に登録したシークレット（AZURE_WEBAPP_NAME 等）が使われる
-    environment: dev
 
     defaults:
       run:
@@ -77,11 +78,39 @@ jobs:
       - name: デプロイパッケージを zip に圧縮
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
+      - name: zip を Artifact にアップロード
+        # deploy ジョブは別ランナーで動くため Artifact 経由でファイルを渡す
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-deploy-zip
+          path: backend-deploy.zip
+          retention-days: 1 # デプロイ後は不要なので 1 日で自動削除
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ② deploy
+  #   build が成功した後に Artifact を取得して Azure へデプロイする
+  #   GitHub Environments の「dev」を使って dev 専用のシークレットを参照する
+  # ════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy to dev
+    needs: build # build が成功した時だけ実行（失敗したらスキップ）
+    runs-on: ubuntu-latest
+
+    # GitHub Environments の「dev」を指定する
+    # → この環境に登録したシークレット（AZURE_WEBAPP_NAME 等）が使われる
+    environment: dev
+
+    steps:
+      - name: zip を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-deploy-zip
+
       - name: Azure App Service (dev) にデプロイ
         # AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ（Azure 未設定時のエラー防止）
         if: env.AZURE_CONFIGURED == 'true'
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # dev Environment の Secret
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}            # dev Environment の Secret
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # dev Environment の Secret
           package: backend-deploy.zip

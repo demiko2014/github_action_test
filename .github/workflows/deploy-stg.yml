@@ -40,12 +40,12 @@ env:
 
 # ---------- ジョブ定義 ----------
 jobs:
-  deploy:
-    name: Build & Deploy to stg
+  # ════════════════════════════════════════════════════════
+  # ジョブ① build
+  # ════════════════════════════════════════════════════════
+  build:
+    name: Build
     runs-on: ubuntu-latest
-
-    # GitHub Environments の「stg」を指定する
-    environment: stg
 
     defaults:
       run:
@@ -72,6 +72,30 @@ jobs:
 
       - name: デプロイパッケージを zip に圧縮
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
+
+      - name: zip を Artifact にアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-deploy-zip
+          path: backend-deploy.zip
+          retention-days: 1
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ② deploy
+  # ════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy to stg
+    needs: build
+    runs-on: ubuntu-latest
+
+    # GitHub Environments の「stg」を指定する
+    environment: stg
+
+    steps:
+      - name: zip を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-deploy-zip
 
       - name: Azure App Service (stg) にデプロイ
         if: env.AZURE_CONFIGURED == 'true'

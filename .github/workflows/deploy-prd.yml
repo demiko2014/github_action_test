@@ -42,13 +42,12 @@ env:
 
 # ---------- ジョブ定義 ----------
 jobs:
-  deploy:
-    name: Build & Deploy to prd
+  # ════════════════════════════════════════════════════════
+  # ジョブ① build
+  # ════════════════════════════════════════════════════════
+  build:
+    name: Build
     runs-on: ubuntu-latest
-
-    # GitHub Environments の「prd」を指定する
-    # → Settings→Environments→prd で Required reviewers を設定すると承認待ちになる
-    environment: prd
 
     defaults:
       run:
@@ -75,6 +74,33 @@ jobs:
 
       - name: デプロイパッケージを zip に圧縮
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
+
+      - name: zip を Artifact にアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-deploy-zip
+          path: backend-deploy.zip
+          retention-days: 1
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ② deploy
+  #   prd Environment に Required reviewers を設定すると
+  #   このジョブが始まる前に承認待ち状態になる（本番誤デプロイ防止）
+  # ════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy to prd
+    needs: build # build が成功した時だけ実行
+    runs-on: ubuntu-latest
+
+    # GitHub Environments の「prd」を指定する
+    # → Settings→Environments→prd で Required reviewers を設定すると承認待ちになる
+    environment: prd
+
+    steps:
+      - name: zip を Artifact からダウンロード
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-deploy-zip
 
       - name: Azure App Service (prd) にデプロイ
         if: env.AZURE_CONFIGURED == 'true'
