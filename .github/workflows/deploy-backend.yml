@@ -1,9 +1,12 @@
 # -----------------------------------------------
 # Azure App Service デプロイワークフロー
 #
+# ブランチ戦略:
+#   feature → develop (PR) → main (PR + Approve) → deploy ← ここ
+#
 # トリガー:
-#   - main ブランチへの push (backend/ 配下の変更時のみ)
-#   - 手動実行 (workflow_dispatch)
+#   - main への push (= develop → main PR が Approve されマージされた時)
+#   - 手動実行
 #
 # 必要な GitHub Secrets:
 #   AZURE_WEBAPP_PUBLISH_PROFILE
@@ -14,9 +17,9 @@ name: Deploy Backend to Azure
 
 on:
   push:
-    branches: [main]
+    branches: [main] # PR が Approve → マージされた時のみ実行
     paths:
-      - "backend/**" # backend/ が変更された時だけ実行
+      - "backend/**"
   workflow_dispatch:
 
 env:

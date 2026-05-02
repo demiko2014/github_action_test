@@ -1,20 +1,23 @@
 # -----------------------------------------------
 # Backend CI ワークフロー
 #
+# ブランチ戦略:
+#   feature → develop (PR) → main (PR + Approve) → deploy
+#
 # トリガー:
-#   - backend/ 配下の変更が main / develop に push された時
-#   - backend/ 配下の変更を含む Pull Request
+#   - develop への push        : develop にマージされた時にテスト
+#   - main への Pull Request   : Approve 前の必須チェック
 #   - 手動実行
 # -----------------------------------------------
 name: Backend CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [develop] # develop にマージされた時
     paths:
       - "backend/**"
   pull_request:
-    branches: [main, develop]
+    branches: [main] # develop → main の PR 時（Approve 前チェック）
     paths:
       - "backend/**"
   workflow_dispatch:
