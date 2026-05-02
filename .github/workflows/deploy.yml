@@ -70,7 +70,7 @@ jobs:
   #   全ブランチ共通処理なので Environment（dev/stg/prd）を使わない
   # ════════════════════════════════════════════════════════
   build:
-    name: Build
+    name: 0. Build
     runs-on: ubuntu-latest
 
     defaults:
@@ -122,12 +122,12 @@ jobs:
   #     deploy-prd
   # ════════════════════════════════════════════════════════
   deploy-dev:
-    name: Deploy to dev
+    name: 1. Deploy to dev
     needs: build # build が成功した後に実行される
     # develop ブランチ以外では Skipped になる
     if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
     runs-on: ubuntu-latest
-    environment: 1-dev # dev Environment のシークレットを使う
+    environment: dev # dev Environment のシークレットを使う
 
     steps:
       - name: zip を Artifact からダウンロード
@@ -148,11 +148,11 @@ jobs:
   #   build 成功後、staging ブランチの時だけ stg 環境へデプロイ（deploy-dev と並列）
   # ════════════════════════════════════════════════════════
   deploy-stg:
-    name: Deploy to stg
+    name: 2. Deploy to stg
     needs: deploy-dev # deploy-dev の下に縦に並ぶ
     if: always() && (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
     runs-on: ubuntu-latest
-    environment: 2-stg
+    environment: stg
 
     steps:
       - name: zip を Artifact からダウンロード
@@ -175,11 +175,11 @@ jobs:
   #   prd Environment に Required reviewers を設定すると承認待ちで停止（本番誤デプロイ防止）
   # ════════════════════════════════════════════════════════
   deploy-prd:
-    name: Deploy to prd
+    name: 3. Deploy to prd
     needs: deploy-stg # deploy-stg の下に縦に並ぶ → 一番下
     if: always() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))
     runs-on: ubuntu-latest
-    environment: 3-prd
+    environment: prd
 
     steps:
       - name: zip を Artifact からダウンロード
