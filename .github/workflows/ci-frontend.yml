@@ -1,0 +1,61 @@
+# -----------------------------------------------
+# Frontend CI ワークフロー
+#
+# トリガー:
+#   - frontend/ 配下の変更が main / develop に push された時
+#   - frontend/ 配下の変更を含む Pull Request
+#   - 手動実行
+# -----------------------------------------------
+name: Frontend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "frontend/**"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "frontend/**"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js ${{ matrix.node-version }} をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # nfc-pcsc はネイティブビルド不要
+      - name: 依存関係インストール
+        run: npm ci --ignore-scripts
+
+      - name: TypeScript 型チェック
+        run: npx tsc --noEmit
+
+      - name: ユニットテスト実行
+        run: npm run test:ci
+
+      - name: カバレッジを Artifacts にアップロード
+        uses: actions/upload-artifact@v4
+        if: matrix.node-version == '20.x'
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          retention-days: 7

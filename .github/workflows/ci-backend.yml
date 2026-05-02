@@ -1,0 +1,90 @@
+# -----------------------------------------------
+# Backend CI ワークフロー
+#
+# トリガー:
+#   - backend/ 配下の変更が main / develop に push された時
+#   - backend/ 配下の変更を含む Pull Request
+#   - 手動実行
+# -----------------------------------------------
+name: Backend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "backend/**"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "backend/**"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js ${{ matrix.node-version }} をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 依存関係インストール
+        run: npm ci
+
+      - name: TypeScript 型チェック
+        run: npx tsc --noEmit
+
+      - name: ユニットテスト実行
+        run: npm run test:ci
+
+      - name: カバレッジを Artifacts にアップロード
+        uses: actions/upload-artifact@v4
+        if: matrix.node-version == '20.x'
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+          retention-days: 7
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test # テストが通った後にビルド
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      - name: TypeScript をコンパイル
+        run: npm run build
+
+      - name: ビルド成果物を Artifacts にアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          path: backend/dist/
+          retention-days: 7
