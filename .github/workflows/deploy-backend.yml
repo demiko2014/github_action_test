@@ -2,22 +2,27 @@
 # Backend デプロイワークフロー（Azure App Service）
 #
 # ブランチ戦略:
-#   feature → develop (PR) → main (PR + Approve) → deploy ← ここ
+#   feature/* → develop → staging → main
+#                  ↓          ↓        ↓
+#                 dev        stg      prd   ← デプロイ先の環境
 #
 # このファイルの役割:
-#   develop→main PR が Approve されてマージされた時に
-#   自動でビルド → Azure App Service へデプロイする
+#   各ブランチへのマージをトリガーに対応環境へ自動デプロイする
+#   ※ テストは ci-backend.yml が担当（Branch Protection で通過を必須に設定）
 #
-#   ※ テストは ci-backend.yml が担当
-#     Branch Protection で ci-backend の通過を必須にすれば
-#     テスト済みのコードだけが main にマージされるので
-#     ここで再度テストする必要はない
+# GitHub Environments を使う理由:
+#   - 環境ごとに別々のシークレット（App Service 名・発行プロファイル）を管理できる
+#   - prd 環境には「Required reviewers」を設定してデプロイ前に承認を求められる
+#   - Actions の実行履歴で「どの環境に何をデプロイしたか」が一目でわかる
 #
 # 事前準備（初回のみ）:
-#   1. Azure Portal で App Service を作成（Node.js 20 / Linux）
-#   2. App Service の「発行プロファイル」をダウンロード
-#   3. GitHub リポジトリ Settings→Secrets→Actions で
-#      「AZURE_WEBAPP_PUBLISH_PROFILE」という名前で貼り付ける
+#   1. Azure Portal で App Service を 3 つ作成（dev/stg/prd 各 Node.js 20 / Linux）
+#   2. 各 App Service の「発行プロファイル」をダウンロード
+#   3. GitHub Settings→Environments で「dev」「stg」「prd」を作成
+#   4. 各 Environment の Secrets に以下を登録:
+#        AZURE_WEBAPP_NAME           = App Service のリソース名
+#        AZURE_WEBAPP_PUBLISH_PROFILE = ダウンロードした発行プロファイルの XML 全文
+#   5. prd Environment の「Required reviewers」に承認者を追加（推奨）
 # ==============================================
 
 # Actions タブに表示されるワークフロー名
@@ -26,27 +31,42 @@ name: Deploy Backend to Azure
 # ---------- トリガー設定 ----------
 on:
   push:
-    branches: [main] # main への push = PR が Approve されてマージされた瞬間
+    branches:
+      - develop # develop マージ → dev 環境へデプロイ
+      - staging # staging マージ → stg 環境へデプロイ
+      - main # main マージ    → prd 環境へデプロイ
     paths:
       - "backend/**" # backend/ 以外の変更（README 等）ではデプロイしない
 
-  workflow_dispatch: # 手動でも実行できるようにする（緊急デプロイ用）
+  workflow_dispatch: # 手動でも実行できるようにする（緊急デプロイ・再デプロイ用）
+    inputs:
+      environment:
+        description: "デプロイ先の環境を選択"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, stg, prd] # プルダウンで環境を選べる
 
-# ---------- 環境変数（ジョブ間で共有） ----------
+# ---------- 共通設定 ----------
 env:
-  AZURE_WEBAPP_NAME: pasori-backend # ← Azure App Service のリソース名に変更してください
   NODE_VERSION: "20.x" # デプロイに使う Node.js バージョン
 
 # ---------- ジョブ定義 ----------
 jobs:
-  # ════════════════════════════════
-  # ジョブ deploy
-  #   ビルド → zip → Azure App Service へアップロード
-  #   テストは ci-backend.yml（PR 時）が済ませているので省略
-  # ════════════════════════════════
-  deploy:
-    name: Build & Deploy
+  # ════════════════════════════════════════════════════════
+  # ジョブ deploy-dev
+  #   develop ブランチへのマージ → dev 環境へデプロイ
+  # ════════════════════════════════════════════════════════
+  deploy-dev:
+    name: Deploy to dev
+    # develop マージ時、または workflow_dispatch で env=dev の時だけ実行する
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
     runs-on: ubuntu-latest
+
+    # GitHub Environments の「dev」を指定する
+    # → この環境に登録したシークレット（AZURE_WEBAPP_NAME 等）が使われる
+    environment: dev
+
     defaults:
       run:
         working-directory: backend
@@ -62,27 +82,113 @@ jobs:
           cache-dependency-path: backend/package-lock.json
 
       - name: 依存関係インストール（全パッケージ）
-        run: npm ci # devDependencies も含めてインストール（tsc を使うため）
+        run: npm ci # tsc を使うため devDependencies も含めてインストール
 
       - name: TypeScript をコンパイル
-        # src/*.ts → dist/*.js に変換する（Azure は JS しか実行できない）
+        run: npm run build # src/*.ts → dist/*.js
+
+      - name: 本番用 node_modules を再インストール
+        run: npm ci --omit=dev # jest や ts-node などの開発ツールを除外してサイズ削減
+
+      - name: デプロイパッケージを zip に圧縮
+        run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
+
+      - name: Azure App Service (dev) にデプロイ
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # dev Environment の Secret
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # dev Environment の Secret
+          package: backend-deploy.zip
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ deploy-stg
+  #   staging ブランチへのマージ → stg 環境へデプロイ
+  # ════════════════════════════════════════════════════════
+  deploy-stg:
+    name: Deploy to stg
+    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg')
+    runs-on: ubuntu-latest
+
+    # GitHub Environments の「stg」を指定する
+    environment: stg
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 依存関係インストール（全パッケージ）
+        run: npm ci
+
+      - name: TypeScript をコンパイル
         run: npm run build
 
       - name: 本番用 node_modules を再インストール
-        # --omit=dev で jest や ts-node などの開発ツールを除外する
-        # → デプロイパッケージのサイズを小さくする
         run: npm ci --omit=dev
 
       - name: デプロイパッケージを zip に圧縮
-        # Azure webapps-deploy は zip ファイルを受け取る
-        # dist/        = コンパイル済み JS
-        # node_modules/ = 本番用パッケージ（dev 除外済み）
-        # package.json  = Azure が Node.js アプリと認識するために必要
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
-      - name: Azure App Service にデプロイ
-        uses: azure/webapps-deploy@v3 # Microsoft 公式の Azure デプロイアクション
+      - name: Azure App Service (stg) にデプロイ
+        uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }} # デプロイ先の App Service 名
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # GitHub Secrets に保存した Azure の認証情報
-          package: backend-deploy.zip # アップロードする zip ファイル
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # stg Environment の Secret
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # stg Environment の Secret
+          package: backend-deploy.zip
+
+  # ════════════════════════════════════════════════════════
+  # ジョブ deploy-prd
+  #   main ブランチへのマージ → prd 環境へデプロイ
+  #   ※ prd Environment に「Required reviewers」を設定すると
+  #     デプロイ実行前に承認者の OK が必須になる（本番誤デプロイ防止）
+  # ════════════════════════════════════════════════════════
+  deploy-prd:
+    name: Deploy to prd
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
+    runs-on: ubuntu-latest
+
+    # GitHub Environments の「prd」を指定する
+    # → Settings→Environments→prd で Required reviewers を設定すると承認待ちになる
+    environment: prd
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 依存関係インストール（全パッケージ）
+        run: npm ci
+
+      - name: TypeScript をコンパイル
+        run: npm run build
+
+      - name: 本番用 node_modules を再インストール
+        run: npm ci --omit=dev
+
+      - name: デプロイパッケージを zip に圧縮
+        run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
+
+      - name: Azure App Service (prd) にデプロイ
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # prd Environment の Secret
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # prd Environment の Secret
+          package: backend-deploy.zip

@@ -2,12 +2,16 @@
 # Backend CI ワークフロー
 #
 # ブランチ戦略:
-#   feature → develop (PR) → main (PR + Approve) → deploy
+#   feature/* → develop → staging → main
+#                  ↓          ↓        ↓
+#                 dev        stg      prd   ← デプロイ先の環境（deploy-backend.yml が担当）
 #
 # このファイルの役割:
-#   ① develop にマージされたら即テストを走らせて品質を確認する
-#   ② main への PR 時にテスト+ビルドを必須チェックとして実行する
-#      (CI が通らないと Approve できないように Branch Protection で設定)
+#   ① develop にマージされたら即テストを走らせて品質を確認する（dev 反映前に検知）
+#   ② staging への PR 時にテストを必須チェックとして実行する（dev → stg 昇格の品質ゲート）
+#   ③ main への PR 時にテストを必須チェックとして実行する（stg → prd 昇格の品質ゲート）
+#      ※ Branch Protection で「必須ステータスチェック」に登録することで
+#        CI が通らないとマージできない状態にする
 # ==============================================
 
 # Actions タブに表示されるワークフロー名
@@ -16,13 +20,17 @@ name: Backend CI
 # ---------- トリガー設定 ----------
 on:
   push:
-    branches: [develop] # develop ブランチに push(=マージ)された時に実行
+    branches:
+      - develop # develop マージ → dev 環境デプロイ前の品質確認
+      - staging # staging マージ → stg 環境デプロイ前の品質確認
     paths:
       - "backend/**" # backend/ 配下のファイルが変わった時だけ実行
 
   pull_request:
-    branches: [main] # main ブランチへの PR が作成・更新された時に実行
-    paths: # → develop→main の PR でテストが必須チェックになる
+    branches:
+      - staging # develop → staging の PR 時に実行（dev → stg 昇格の品質ゲート）
+      - main # staging → main の PR 時に実行（stg → prd 昇格の品質ゲート）
+    paths:
       - "backend/**"
 
   workflow_dispatch: # Actions タブの「Run workflow」ボタンで手動実行できるようにする

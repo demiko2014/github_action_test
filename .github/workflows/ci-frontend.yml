@@ -2,12 +2,14 @@
 # Frontend CI ワークフロー
 #
 # ブランチ戦略:
-#   feature → develop (PR) → main (PR + Approve) → deploy
+#   feature/* → develop → staging → main
+#                  ↓          ↓        ↓
+#                 dev        stg      prd
 #
 # このファイルの役割:
-#   ① develop にマージされたら即テストを走らせて品質を確認する
-#   ② main への PR 時にテストを必須チェックとして実行する
-#      (CI が通らないと Approve できないように Branch Protection で設定)
+#   ① develop にマージされたら即テストを走らせて品質を確認する（dev 反映前に検知）
+#   ② staging への PR 時にテストを必須チェックとして実行する（dev → stg 昇格の品質ゲート）
+#   ③ main への PR 時にテストを必須チェックとして実行する（stg → prd 昇格の品質ゲート）
 # ==============================================
 
 # Actions タブに表示されるワークフロー名
@@ -16,13 +18,17 @@ name: Frontend CI
 # ---------- トリガー設定 ----------
 on:
   push:
-    branches: [develop] # develop ブランチに push(=マージ)された時に実行
+    branches:
+      - develop # develop マージ → dev 環境確認用
+      - staging # staging マージ → stg 環境確認用
     paths:
-      - "frontend/**" # frontend/ 配下のファイルが変わった時だけ実行（無関係な変更では動かない）
+      - "frontend/**" # frontend/ 配下のファイルが変わった時だけ実行
 
   pull_request:
-    branches: [main] # main ブランチへの PR が作成・更新された時に実行
-    paths: # → develop→main の PR でテストが必須チェックになる
+    branches:
+      - staging # develop → staging の PR 時に実行（dev → stg 昇格の品質ゲート）
+      - main # staging → main の PR 時に実行（stg → prd 昇格の品質ゲート）
+    paths:
       - "frontend/**"
 
   workflow_dispatch: # Actions タブの「Run workflow」ボタンで手動実行できるようにする
@@ -89,7 +95,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test   # test ジョブが成功した時だけ実行（失敗したらスキップ）
+    needs: test # test ジョブが成功した時だけ実行（失敗したらスキップ）
 
     defaults:
       run:
@@ -100,12 +106,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.x'                                  # ビルドは LTS の 20.x 固定
-          cache: 'npm'
+          node-version: "20.x" # ビルドは LTS の 20.x 固定
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
       - name: 依存関係インストール
-        run: npm ci --ignore-scripts    # nfc-pcsc のネイティブビルドをスキップ
+        run: npm ci --ignore-scripts # nfc-pcsc のネイティブビルドをスキップ
 
       - name: TypeScript をコンパイル
         # tsconfig.json の設定に従って src/ を dist/ に JS 変換する
@@ -114,6 +120,6 @@ jobs:
       - name: ビルド成果物を Artifacts にアップロード
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-dist    # Artifacts のファイル名
-          path: frontend/dist/   # コンパイル後の JS ファイル群
-          retention-days: 7      # 7日後に自動削除
+          name: frontend-dist # Artifacts のファイル名
+          path: frontend/dist/ # コンパイル後の JS ファイル群
+          retention-days: 7 # 7日後に自動削除
