@@ -1,65 +1,81 @@
-# -----------------------------------------------
-# Azure App Service デプロイワークフロー
+# ==============================================
+# Backend デプロイワークフロー（Azure App Service）
 #
 # ブランチ戦略:
 #   feature → develop (PR) → main (PR + Approve) → deploy ← ここ
 #
-# トリガー:
-#   - main への push (= develop → main PR が Approve されマージされた時)
-#   - 手動実行
+# このファイルの役割:
+#   develop→main PR が Approve されてマージされた時に
+#   自動でテスト → ビルド → Azure App Service へデプロイする
 #
-# 必要な GitHub Secrets:
-#   AZURE_WEBAPP_PUBLISH_PROFILE
-#     → Azure Portal > App Service > 発行プロファイルをダウンロード
-#     → GitHub リポジトリ Settings > Secrets > New repository secret
-# -----------------------------------------------
+# 事前準備（初回のみ）:
+#   1. Azure Portal で App Service を作成（Node.js 20 / Linux）
+#   2. App Service の「発行プロファイル」をダウンロード
+#   3. GitHub リポジトリ Settings→Secrets→Actions で
+#      「AZURE_WEBAPP_PUBLISH_PROFILE」という名前で貼り付ける
+# ==============================================
+
+# Actions タブに表示されるワークフロー名
 name: Deploy Backend to Azure
 
+# ---------- トリガー設定 ----------
 on:
   push:
-    branches: [main] # PR が Approve → マージされた時のみ実行
+    branches: [main] # main への push = PR が Approve されてマージされた瞬間
     paths:
-      - "backend/**"
-  workflow_dispatch:
+      - "backend/**" # backend/ 以外の変更（README 等）ではデプロイしない
 
+  workflow_dispatch: # 手動でも実行できるようにする（緊急デプロイ用）
+
+# ---------- 環境変数（ジョブ間で共有） ----------
 env:
-  AZURE_WEBAPP_NAME: pasori-backend # ← Azure App Service の名前に変更してください
-  NODE_VERSION: "20.x"
+  AZURE_WEBAPP_NAME: pasori-backend # ← Azure App Service のリソース名に変更してください
+  NODE_VERSION: "20.x" # デプロイに使う Node.js バージョン
 
+# ---------- ジョブ定義 ----------
 jobs:
-  # ── ① テスト（これが通った時だけデプロイする）──────
+  # ════════════════════════════════
+  # ジョブ① test
+  #   デプロイ前に最終テストを実行する
+  #   （main マージ直前に CI は通っているが念のため再確認）
+  # ════════════════════════════════
   test:
     name: Test
     runs-on: ubuntu-latest
 
     defaults:
       run:
-        working-directory: backend
+        working-directory: backend # コマンドは backend/ 内で実行
 
     steps:
+      # リポジトリのコードをチェックアウト
       - uses: actions/checkout@v4
 
       - name: Node.js をセットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
+          node-version: ${{ env.NODE_VERSION }} # env で定義した 20.x を使用
+          cache: "npm" # node_modules をキャッシュ
           cache-dependency-path: backend/package-lock.json
 
       - name: 依存関係インストール
-        run: npm ci
+        run: npm ci # package-lock.json を厳密に使ってクリーンインストール
 
       - name: TypeScript 型チェック
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit # 型エラーがあればここで止まる
 
       - name: ユニットテスト実行
-        run: npm run test:ci
+        run: npm run test:ci # テスト失敗ならここで止まり deploy ジョブは実行されない
 
-  # ── ② デプロイ（test ジョブ成功時のみ実行）─────────
+  # ════════════════════════════════
+  # ジョブ② deploy
+  #   test ジョブが成功した時だけ実行される
+  #   ビルド → zip → Azure App Service へアップロード
+  # ════════════════════════════════
   deploy:
     name: Build & Deploy
     runs-on: ubuntu-latest
-    needs: test # ← テストが通った時だけデプロイ
+    needs: test # test ジョブが成功した時だけ実行（失敗したらデプロイしない）
 
     defaults:
       run:
@@ -75,23 +91,28 @@ jobs:
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
-      - name: 依存関係インストール
-        run: npm ci
+      - name: 依存関係インストール（全パッケージ）
+        run: npm ci # devDependencies も含めてインストール（tsc を使うため）
 
       - name: TypeScript をコンパイル
+        # src/*.ts → dist/*.js に変換する（Azure は JS しか実行できない）
         run: npm run build
 
-      # 本番用に node_modules を再インストール（devDependencies を除外）
-      - name: 本番用 node_modules をインストール
+      - name: 本番用 node_modules を再インストール
+        # --omit=dev で jest や ts-node などの開発ツールを除外する
+        # → デプロイパッケージのサイズを小さくする
         run: npm ci --omit=dev
 
-      # デプロイパッケージを作成（dist/ + node_modules + package.json）
       - name: デプロイパッケージを zip に圧縮
+        # Azure webapps-deploy は zip ファイルを受け取る
+        # dist/        = コンパイル済み JS
+        # node_modules/ = 本番用パッケージ（dev 除外済み）
+        # package.json  = Azure が Node.js アプリと認識するために必要
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
       - name: Azure App Service にデプロイ
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@v3 # Microsoft 公式の Azure デプロイアクション
         with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: backend-deploy.zip
+          app-name: ${{ env.AZURE_WEBAPP_NAME }} # デプロイ先の App Service 名
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # GitHub Secrets に保存した Azure の認証情報
+          package: backend-deploy.zip # アップロードする zip ファイル

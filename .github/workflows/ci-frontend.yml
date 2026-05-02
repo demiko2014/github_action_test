@@ -1,64 +1,82 @@
-# -----------------------------------------------
+# ==============================================
 # Frontend CI ワークフロー
 #
 # ブランチ戦略:
 #   feature → develop (PR) → main (PR + Approve) → deploy
 #
-# トリガー:
-#   - develop への push        : develop にマージされた時にテスト
-#   - main への Pull Request   : Approve 前の必須チェック
-#   - 手動実行
-# -----------------------------------------------
+# このファイルの役割:
+#   ① develop にマージされたら即テストを走らせて品質を確認する
+#   ② main への PR 時にテストを必須チェックとして実行する
+#      (CI が通らないと Approve できないように Branch Protection で設定)
+# ==============================================
+
+# Actions タブに表示されるワークフロー名
 name: Frontend CI
 
+# ---------- トリガー設定 ----------
 on:
   push:
-    branches: [develop] # develop にマージされた時
+    branches: [develop] # develop ブランチに push(=マージ)された時に実行
     paths:
-      - "frontend/**"
-  pull_request:
-    branches: [main] # develop → main の PR 時（Approve 前チェック）
-    paths:
-      - "frontend/**"
-  workflow_dispatch:
+      - "frontend/**" # frontend/ 配下のファイルが変わった時だけ実行（無関係な変更では動かない）
 
+  pull_request:
+    branches: [main] # main ブランチへの PR が作成・更新された時に実行
+    paths: # → develop→main の PR でテストが必須チェックになる
+      - "frontend/**"
+
+  workflow_dispatch: # Actions タブの「Run workflow」ボタンで手動実行できるようにする
+
+# ---------- ジョブ定義 ----------
 jobs:
   test:
+    # Actions 画面に表示されるジョブ名（matrix の値が展開されて「Test (Node 20.x)」などになる）
     name: Test (Node ${{ matrix.node-version }})
+
+    # ジョブを実行する OS（GitHub 提供の Ubuntu 最新版）
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
+        # Node.js の複数バージョンで並列テストする（バージョン互換性の確認）
         node-version: [20.x, 22.x]
 
     defaults:
       run:
+        # 以降の run コマンドはすべて frontend/ ディレクトリ内で実行される
         working-directory: frontend
 
     steps:
+      # リポジトリのコードを ubuntu-latest 上にチェックアウトする
       - uses: actions/checkout@v4
 
       - name: Node.js ${{ matrix.node-version }} をセットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          node-version: ${{ matrix.node-version }} # matrix で指定したバージョンを使用
+          cache: "npm" # node_modules を GitHub のキャッシュに保存して次回以降を高速化
+          cache-dependency-path: frontend/package-lock.json # package-lock.json のハッシュでキャッシュを識別
 
-      # nfc-pcsc はネイティブビルド不要
       - name: 依存関係インストール
+        # npm ci = package-lock.json を厳密に使ってクリーンインストール（npm install より再現性が高い）
+        # --ignore-scripts = nfc-pcsc のネイティブビルド(node-gyp)をスキップ（CI 環境に Python/C++ が不要）
         run: npm ci --ignore-scripts
 
       - name: TypeScript 型チェック
+        # --noEmit = JS ファイルを出力せず型エラーだけチェックする
         run: npx tsc --noEmit
 
       - name: ユニットテスト実行
+        # jest でテストを実行しカバレッジレポートを生成する
+        # --ci フラグ: CI 環境向けの厳格モード（スナップショット自動更新なし等）
+        # --forceExit: テスト後に残った非同期処理を強制終了してハングを防ぐ
         run: npm run test:ci
 
       - name: カバレッジを Artifacts にアップロード
         uses: actions/upload-artifact@v4
+        # Node 20.x の時だけアップロード（22.x でも同じものが生成されるので重複を避ける）
         if: matrix.node-version == '20.x'
         with:
-          name: frontend-coverage
-          path: frontend/coverage/
-          retention-days: 7
+          name: frontend-coverage # Artifacts のファイル名
+          path: frontend/coverage/ # coverage/ フォルダ全体をアップロード
+          retention-days: 7 # 7日後に自動削除（容量節約）

@@ -1,71 +1,93 @@
-# -----------------------------------------------
+# ==============================================
 # Backend CI ワークフロー
 #
 # ブランチ戦略:
 #   feature → develop (PR) → main (PR + Approve) → deploy
 #
-# トリガー:
-#   - develop への push        : develop にマージされた時にテスト
-#   - main への Pull Request   : Approve 前の必須チェック
-#   - 手動実行
-# -----------------------------------------------
+# このファイルの役割:
+#   ① develop にマージされたら即テストを走らせて品質を確認する
+#   ② main への PR 時にテスト+ビルドを必須チェックとして実行する
+#      (CI が通らないと Approve できないように Branch Protection で設定)
+# ==============================================
+
+# Actions タブに表示されるワークフロー名
 name: Backend CI
 
+# ---------- トリガー設定 ----------
 on:
   push:
-    branches: [develop] # develop にマージされた時
+    branches: [develop] # develop ブランチに push(=マージ)された時に実行
     paths:
-      - "backend/**"
-  pull_request:
-    branches: [main] # develop → main の PR 時（Approve 前チェック）
-    paths:
-      - "backend/**"
-  workflow_dispatch:
+      - "backend/**" # backend/ 配下のファイルが変わった時だけ実行
 
+  pull_request:
+    branches: [main] # main ブランチへの PR が作成・更新された時に実行
+    paths: # → develop→main の PR でテストが必須チェックになる
+      - "backend/**"
+
+  workflow_dispatch: # Actions タブの「Run workflow」ボタンで手動実行できるようにする
+
+# ---------- ジョブ定義 ----------
 jobs:
+  # ════════════════════════════════
+  # ジョブ① test
+  #   複数の Node.js バージョンで並列テストする
+  # ════════════════════════════════
   test:
     name: Test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
+        # Node.js の複数バージョンで並列テストする（バージョン互換性の確認）
         node-version: [20.x, 22.x]
 
     defaults:
       run:
+        # 以降の run コマンドはすべて backend/ ディレクトリ内で実行される
         working-directory: backend
 
     steps:
+      # リポジトリのコードを ubuntu-latest 上にチェックアウトする
       - uses: actions/checkout@v4
 
       - name: Node.js ${{ matrix.node-version }} をセットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: "npm"
-          cache-dependency-path: backend/package-lock.json
+          node-version: ${{ matrix.node-version }} # matrix で指定したバージョンを使用
+          cache: "npm" # node_modules を GitHub のキャッシュに保存して次回以降を高速化
+          cache-dependency-path: backend/package-lock.json # package-lock.json のハッシュでキャッシュを識別
 
       - name: 依存関係インストール
+        # npm ci = package-lock.json を厳密に使ってクリーンインストール（再現性が高い）
         run: npm ci
 
       - name: TypeScript 型チェック
+        # --noEmit = JS ファイルを出力せず型エラーだけチェックする
         run: npx tsc --noEmit
 
       - name: ユニットテスト実行
+        # --ci: CI 環境向けの厳格モード  --forceExit: ハング防止
         run: npm run test:ci
 
       - name: カバレッジを Artifacts にアップロード
         uses: actions/upload-artifact@v4
+        # Node 20.x の時だけアップロード（22.x でも同じものが生成されるので重複を避ける）
         if: matrix.node-version == '20.x'
         with:
           name: backend-coverage
-          path: backend/coverage/
-          retention-days: 7
+          path: backend/coverage/ # coverage/ フォルダ全体をアップロード
+          retention-days: 7 # 7日後に自動削除（容量節約）
 
+  # ════════════════════════════════
+  # ジョブ② build
+  #   test ジョブが全バージョンで成功した後にビルドを実行
+  #   → "ビルドできる" ことを CI で保証する
+  # ════════════════════════════════
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test # テストが通った後にビルド
+    needs: test # test ジョブが成功した時だけ実行される（失敗したらスキップ）
 
     defaults:
       run:
@@ -76,18 +98,19 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20.x"
+          node-version: "20.x" # ビルドは LTS の 20.x 固定
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
       - run: npm ci
 
       - name: TypeScript をコンパイル
+        # tsconfig.json の設定に従って src/ を dist/ に JS 変換する
         run: npm run build
 
       - name: ビルド成果物を Artifacts にアップロード
         uses: actions/upload-artifact@v4
         with:
-          name: backend-dist
-          path: backend/dist/
-          retention-days: 7
+          name: backend-dist # Artifacts のファイル名
+          path: backend/dist/ # コンパイル後の JS ファイル群
+          retention-days: 7 # 7日後に自動削除
