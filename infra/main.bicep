@@ -76,6 +76,12 @@ param linuxFxVersion string = 'NODE|20-lts'
 @description('追加のアプリケーション設定です。')
 param appSettings object = {}
 
+// GitHub Actions の azure/webapps-deploy@v3 は publish profile を使って
+// Kudu/SCM エンドポイントへ zip deploy します。
+// そのため SCM の基本認証は有効にしておきます。
+@description('publish profile による zip deploy を許可するため、SCM の基本認証を有効にするかどうかです。')
+param enableScmBasicAuth bool = true
+
 // Azure のリソース名は小文字に寄せておくと扱いやすいため、
 // appName を小文字化してから suffix を組み立てます。
 var normalizedAppName = toLower(appName)
@@ -132,6 +138,10 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       // HealthController の /health は実際には /api/health になります。
       healthCheckPath: '/api/health'
 
+      // B1 以上では Always On を有効にして、アイドル時にアプリが停止しにくくします。
+      // F1 では Always On が使えないため false にします。
+      alwaysOn: skuName != 'F1'
+
       // object 型で受け取った app settings を、App Service の配列形式に変換します。
       appSettings: [
         for settingName in items(mergedAppSettings): {
@@ -140,6 +150,26 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         }
       ]
     }
+  }
+}
+
+// GitHub Actions の publish profile deploy は SCM(Kudu) の発行資格情報を使います。
+// Azure 側の既定値に依存せず、Bicep で明示的に許可しておきます。
+resource scmBasicAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01' = {
+  parent: webApp
+  name: 'scm'
+  properties: {
+    allow: enableScmBasicAuth
+  }
+}
+
+// FTP 経由のデプロイは使わないため、基本認証を無効にします。
+// GitHub Actions は SCM(Kudu) を使うので、この設定で zip deploy は継続できます。
+resource ftpBasicAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01' = {
+  parent: webApp
+  name: 'ftp'
+  properties: {
+    allow: false
   }
 }
 
