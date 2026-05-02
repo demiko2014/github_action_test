@@ -60,9 +60,11 @@ jobs:
   deploy-dev:
     name: Deploy to dev
     # develop マージ時、または workflow_dispatch で env=dev の時だけ実行する
-    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    # secrets.AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ（Azure 未設定時のエラー防止）
+    if: |
+      (github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'))
+      && secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
     runs-on: ubuntu-latest
-
     # GitHub Environments の「dev」を指定する
     # → この環境に登録したシークレット（AZURE_WEBAPP_NAME 等）が使われる
     environment: dev
@@ -106,9 +108,11 @@ jobs:
   # ════════════════════════════════════════════════════════
   deploy-stg:
     name: Deploy to stg
-    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg')
+    # secrets.AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ
+    if: |
+      (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
+      && secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
     runs-on: ubuntu-latest
-
     # GitHub Environments の「stg」を指定する
     environment: stg
 
@@ -153,9 +157,11 @@ jobs:
   # ════════════════════════════════════════════════════════
   deploy-prd:
     name: Deploy to prd
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
+    # secrets.AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ
+    if: |
+      (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))
+      && secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
     runs-on: ubuntu-latest
-
     # GitHub Environments の「prd」を指定する
     # → Settings→Environments→prd で Required reviewers を設定すると承認待ちになる
     environment: prd
