@@ -60,10 +60,7 @@ jobs:
   deploy-dev:
     name: Deploy to dev
     # develop マージ時、または workflow_dispatch で env=dev の時だけ実行する
-    # secrets.AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ（Azure 未設定時のエラー防止）
-    if: |
-      (github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'))
-      && secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
     runs-on: ubuntu-latest
     # GitHub Environments の「dev」を指定する
     # → この環境に登録したシークレット（AZURE_WEBAPP_NAME 等）が使われる
@@ -96,6 +93,9 @@ jobs:
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
       - name: Azure App Service (dev) にデプロイ
+        # ジョブの if では secrets を参照できないため、ステップレベルでチェックする
+        # GitHub Environments に AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ
+        if: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # dev Environment の Secret
@@ -108,10 +108,7 @@ jobs:
   # ════════════════════════════════════════════════════════
   deploy-stg:
     name: Deploy to stg
-    # secrets.AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ
-    if: |
-      (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
-      && secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
+    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg')
     runs-on: ubuntu-latest
     # GitHub Environments の「stg」を指定する
     environment: stg
@@ -143,6 +140,7 @@ jobs:
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
       - name: Azure App Service (stg) にデプロイ
+        if: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # stg Environment の Secret
@@ -158,9 +156,7 @@ jobs:
   deploy-prd:
     name: Deploy to prd
     # secrets.AZURE_WEBAPP_PUBLISH_PROFILE が未登録の場合はスキップ
-    if: |
-      (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))
-      && secrets.AZURE_WEBAPP_PUBLISH_PROFILE != ''
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
     runs-on: ubuntu-latest
     # GitHub Environments の「prd」を指定する
     # → Settings→Environments→prd で Required reviewers を設定すると承認待ちになる
@@ -193,6 +189,7 @@ jobs:
         run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
 
       - name: Azure App Service (prd) にデプロイ
+        if: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }} # prd Environment の Secret
