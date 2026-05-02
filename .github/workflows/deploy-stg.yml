@@ -1,0 +1,78 @@
+# ==============================================
+# Backend デプロイワークフロー - stg 環境
+#
+# ブランチ戦略:
+#   feature/* → develop → staging → main
+#                             ↓
+#                            stg  ← このファイルが担当
+#
+# トリガー: staging ブランチへのマージ
+# デプロイ先: Azure App Service (stg)
+#
+# 事前準備（初回のみ）:
+#   1. Azure Portal で App Service を作成（Node.js 20 / Linux）
+#   2. App Service の「発行プロファイル」をダウンロード
+#   3. GitHub Settings→Environments で「stg」を作成
+#   4. stg Environment の Secrets に以下を登録:
+#        AZURE_WEBAPP_NAME           = App Service のリソース名
+#        AZURE_WEBAPP_PUBLISH_PROFILE = 発行プロファイルの XML 全文
+# ==============================================
+
+name: Deploy to stg
+
+# ---------- トリガー設定 ----------
+on:
+  push:
+    branches:
+      - staging # staging マージ → stg 環境へデプロイ
+    paths:
+      - "backend/**"
+
+  workflow_dispatch: # 手動実行（緊急デプロイ・再デプロイ用）
+
+# ---------- 共通設定 ----------
+env:
+  NODE_VERSION: "20.x"
+
+# ---------- ジョブ定義 ----------
+jobs:
+  deploy:
+    name: Build & Deploy to stg
+    runs-on: ubuntu-latest
+
+    # GitHub Environments の「stg」を指定する
+    environment: stg
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 依存関係インストール（全パッケージ）
+        run: npm ci
+
+      - name: TypeScript をコンパイル
+        run: npm run build
+
+      - name: 本番用 node_modules を再インストール
+        run: npm ci --omit=dev
+
+      - name: デプロイパッケージを zip に圧縮
+        run: zip -r ../backend-deploy.zip dist/ node_modules/ package.json
+
+      - name: Azure App Service (stg) にデプロイ
+        if: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend-deploy.zip
