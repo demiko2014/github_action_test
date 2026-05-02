@@ -48,7 +48,7 @@ jobs:
     strategy:
       matrix:
         # Node.js の複数バージョンで並列テストする（バージョン互換性の確認）
-        node-version: [20.x, 22.x]
+        node-version: [20.x, 22.x, 24.x]
 
     defaults:
       run:
