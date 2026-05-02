@@ -125,7 +125,7 @@ jobs:
     name: 1. Deploy to dev
     needs: build # build が成功した後に実行される
     # develop ブランチ以外では Skipped になる
-    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
     runs-on: ubuntu-latest
     environment: dev # dev Environment のシークレットを使う
 
@@ -150,7 +150,7 @@ jobs:
   deploy-2-stg:
     name: 2. Deploy to stg
     needs: build # deploy-dev と同じ層に並列表示される
-    if: always() && (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
+    if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/staging') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
     runs-on: ubuntu-latest
     environment: stg
 
@@ -177,7 +177,7 @@ jobs:
   deploy-3-prd:
     name: 3. Deploy to prd
     needs: build # dev/stg と同じ層に並列表示される
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd')
     runs-on: ubuntu-latest
     environment: prd
 
