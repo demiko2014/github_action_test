@@ -149,7 +149,7 @@ jobs:
   # ════════════════════════════════════════════════════════
   deploy-stg:
     name: 2. Deploy to stg
-    needs: deploy-dev # deploy-dev の下に縦に並ぶ
+    needs: build # deploy-dev と同じ層に並列表示される
     if: always() && (github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'stg'))
     runs-on: ubuntu-latest
     environment: stg
@@ -176,7 +176,7 @@ jobs:
   # ════════════════════════════════════════════════════════
   deploy-prd:
     name: 3. Deploy to prd
-    needs: deploy-stg # deploy-stg の下に縦に並ぶ → 一番下
+    needs: [deploy-dev, deploy-stg] # 両方が終わった後 → 一番下に表示される
     if: always() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prd'))
     runs-on: ubuntu-latest
     environment: prd
